@@ -4,6 +4,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 remote="$(git -C "$root" remote get-url origin)"
 pages="$(mktemp -d)"
 trap 'rm -rf "$pages"' EXIT
