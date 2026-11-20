@@ -14,6 +14,7 @@ path = "src/main.rs"
 
 [dependencies]
 bible-core = { path = "../core" }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 leptos = { version = "0.8", features = ["csr"] }

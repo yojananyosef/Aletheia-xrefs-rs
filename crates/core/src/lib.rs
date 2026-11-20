@@ -5,6 +5,7 @@
 
 pub mod tables;
 pub mod tables_es;
+pub mod words;
 
 pub const VERSE_COUNT: u32 = 31_102;
 pub const CHAPTER_COUNT: u32 = 1_189;

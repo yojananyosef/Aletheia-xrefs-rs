@@ -9,11 +9,12 @@
 use std::collections::HashSet;
 use std::env;
 use std::fs::{self, File};
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Read, Write};
 use std::path::Path;
 
 use bible_core::format::{TranslationText, XrefData};
-use bible_core::{parse_osis_id, tables, VerseRef, Versification, VERSE_COUNT};
+use bible_core::words::WordsData;
+use bible_core::{VERSE_COUNT, VerseRef, Versification, parse_osis_id, tables};
 
 fn main() {
     if let Err(error) = run() {
@@ -38,10 +39,7 @@ fn run() -> Result<(), String> {
             let raw = Path::new(raw);
             let output = Path::new(output);
             fs::create_dir_all(output).map_err(|error| error.to_string())?;
-            build_xrefs(
-                &raw.join("cross_references.txt"),
-                &output.join("xrefs.bin"),
-            )?;
+            build_xrefs(&raw.join("cross_references.txt"), &output.join("xrefs.bin"))?;
             build_vpl(&raw.join("spaplatense_vpl.txt"), &output.join("plat.bin"))?;
             build_vpl(&raw.join("eng-asv_vpl.txt"), &output.join("asv.bin"))?;
             Ok(())
@@ -83,7 +81,9 @@ fn verify(dir: &Path) -> Result<(), String> {
         let start = xrefs.offsets[source] as usize;
         let end = xrefs.offsets[source + 1] as usize;
         if start < previous_offset || end < start {
-            return Err(format!("xrefs: offsets are not monotonic at verse {source}"));
+            return Err(format!(
+                "xrefs: offsets are not monotonic at verse {source}"
+            ));
         }
         previous_offset = end;
         let mut previous_votes: Option<i16> = None;
@@ -130,8 +130,8 @@ fn verify(dir: &Path) -> Result<(), String> {
             .ok_or_else(|| format!("sample {osis} is not in the versification"))
     };
     let sample = (index_of("Gen.1.1")?, index_of("Rev.3.14")?);
-    let found = (xrefs.offsets[sample.0 as usize]..xrefs.offsets[sample.0 as usize + 1])
-        .any(|link| {
+    let found =
+        (xrefs.offsets[sample.0 as usize]..xrefs.offsets[sample.0 as usize + 1]).any(|link| {
             let link = link as usize;
             xrefs.target_start[link] == sample.1
                 && xrefs.target_end[link] == sample.1
@@ -156,25 +156,85 @@ fn verify(dir: &Path) -> Result<(), String> {
                 text.verse_count
             ));
         }
-        let first = text.text(0).ok_or_else(|| format!("{file}: missing Genesis 1:1"))?;
+        let first = text
+            .text(0)
+            .ok_or_else(|| format!("{file}: missing Genesis 1:1"))?;
         if !first.starts_with(expected_first) {
             return Err(format!("{file}: unexpected Genesis 1:1 {first:?}"));
         }
-        let john_text = text.text(john).ok_or_else(|| format!("{file}: missing John 3:16"))?;
+        let john_text = text
+            .text(john)
+            .ok_or_else(|| format!("{file}: missing John 3:16"))?;
         if !john_text.contains(expected_john) {
             return Err(format!("{file}: unexpected John 3:16 {john_text:?}"));
         }
         text_bytes += text.blob.len();
     }
 
+    let words = WordsData::parse(&read_gzip(&dir.join("words.bin.gz"))?)
+        .map_err(|error| format!("words.bin.gz: {error}"))?;
+    if words.verse_count != VERSE_COUNT {
+        return Err(format!(
+            "words: {} verses, expected {VERSE_COUNT}",
+            words.verse_count
+        ));
+    }
+    if words.word_count() < 400_000 {
+        return Err(format!("words: only {} word records", words.word_count()));
+    }
+    let john_words = words.words_in_verse(john);
+    let g25 = words
+        .lex_id("G0025")
+        .ok_or_else(|| "words: G0025 (ἀγαπάω) is missing".to_string())?;
+    if !john_words.iter().any(|word| word.strong_id == g25) {
+        return Err("words: John 3:16 is missing G0025 (ἀγαπάω)".into());
+    }
+    let psalm_book = bible_core::book_index("Ps").ok_or("words: missing Psalms")?;
+    let psalm = versification
+        .index_of(VerseRef {
+            book: psalm_book,
+            chapter: 23,
+            verse: 1,
+        })
+        .ok_or("words: Psalm 23:1 is not in the versification")?;
+    let h3068 = words
+        .lex_id("H3068G")
+        .ok_or_else(|| "words: H3068G is missing".to_string())?;
+    if !words
+        .words_in_verse(psalm)
+        .iter()
+        .any(|word| word.strong_id == h3068)
+    {
+        return Err("words: Psalm 23:1 is missing H3068G".into());
+    }
+    let g25_count = words.occurrence_count(g25);
+    if g25_count < 90 {
+        return Err(format!(
+            "words: expected many G0025 occurrences, found {g25_count}"
+        ));
+    }
+
     println!(
-        "ok: {} verses, {} links ({} published), {} bytes of text",
+        "ok: {} verses, {} links ({} published), {} bytes of text, {} words / {} lemmas (G0025 in {} verses)",
         xrefs.verse_count,
         xrefs.link_count(),
         published,
-        text_bytes
+        text_bytes,
+        words.word_count(),
+        words.lex_count(),
+        g25_count
     );
     Ok(())
+}
+
+fn read_gzip(path: &Path) -> Result<Vec<u8>, String> {
+    let bytes = fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let mut decoder = flate2::read::GzDecoder::new(bytes.as_slice());
+    let mut out = Vec::new();
+    decoder
+        .read_to_end(&mut out)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    Ok(out)
 }
 
 fn read_text(path: &Path) -> Result<String, String> {
@@ -210,7 +270,10 @@ fn build_xrefs(input: &Path, output: &Path) -> Result<(), String> {
     let mut lines = text.lines();
     let header = lines.next().ok_or("OpenBible: empty input")?;
     if !header.starts_with("From Verse\tTo Verse\tVotes") {
-        return Err(format!("OpenBible: unexpected header {:?}", &header[..80.min(header.len())]));
+        return Err(format!(
+            "OpenBible: unexpected header {:?}",
+            &header[..80.min(header.len())]
+        ));
     }
 
     let versification = Versification::kjv();
@@ -228,7 +291,9 @@ fn build_xrefs(input: &Path, output: &Path) -> Result<(), String> {
         let line_number = offset + 2;
         let fields: Vec<&str> = line.split('\t').collect();
         if fields.len() != 3 {
-            return Err(format!("OpenBible line {line_number}: malformed row {line:?}"));
+            return Err(format!(
+                "OpenBible line {line_number}: malformed row {line:?}"
+            ));
         }
         let from = resolve_osis(fields[0], &versification, &mut remapped)
             .map_err(|error| format!("OpenBible line {line_number}: {error}"))?;
@@ -246,9 +311,12 @@ fn build_xrefs(input: &Path, output: &Path) -> Result<(), String> {
                 fields[1]
             ));
         }
-        let votes: i32 = fields[2]
-            .parse()
-            .map_err(|_| format!("OpenBible line {line_number}: invalid votes {:?}", fields[2]))?;
+        let votes: i32 = fields[2].parse().map_err(|_| {
+            format!(
+                "OpenBible line {line_number}: invalid votes {:?}",
+                fields[2]
+            )
+        })?;
         let votes = i16::try_from(votes)
             .map_err(|_| format!("OpenBible line {line_number}: votes out of range"))?;
 
@@ -338,7 +406,9 @@ fn build_text(input: &Path, output: &Path) -> Result<(), String> {
                 chapter,
                 verse,
             })
-            .ok_or_else(|| format!("BSB line {line_number}: {book_name} {chapter}:{verse} is not in KJV"))?;
+            .ok_or_else(|| {
+                format!("BSB line {line_number}: {book_name} {chapter}:{verse} is not in KJV")
+            })?;
         if verses[index as usize].replace(body.trim()).is_some() {
             duplicates += 1;
         }

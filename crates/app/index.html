@@ -6,7 +6,7 @@
     <title>Referencias cruzadas de la Biblia · Aletheia</title>
     <meta
       name="description"
-      content="Explora 344.799 referencias cruzadas en 31.102 versículos con la Biblia Platense (Straubinger) y la American Standard Version. Diagrama de arcos interactivo en Rust + WebAssembly."
+      content="Explora 344.799 referencias cruzadas en 31.102 versículos con la Biblia Platense (Straubinger) y la American Standard Version, y consulta el texto original hebreo/griego con léxico Strong. Diagrama de arcos interactivo en Rust + WebAssembly."
     />
     <meta name="theme-color" content="#0b0c0e" />
     <meta name="color-scheme" content="dark" />
@@ -17,7 +17,7 @@
     <meta property="og:title" content="Referencias cruzadas de la Biblia" />
     <meta
       property="og:description"
-      content="344.799 referencias cruzadas, 31.102 versículos y dos traducciones: Platense y ASV. Un mapa interactivo de la Biblia en Rust + WebAssembly."
+      content="344.799 referencias cruzadas, 31.102 versículos, dos traducciones y el texto original hebreo/griego con léxico Strong. Un mapa interactivo de la Biblia en Rust + WebAssembly."
     />
     <meta property="og:url" content="https://yojananyosef.github.io/Aletheia-xrefs-rs/" />
     <meta property="og:image" content="https://yojananyosef.github.io/Aletheia-xrefs-rs/og-image.png" />
@@ -29,7 +29,7 @@
     <meta name="twitter:title" content="Referencias cruzadas de la Biblia" />
     <meta
       name="twitter:description"
-      content="344.799 referencias cruzadas, 31.102 versículos y dos traducciones: Platense y ASV."
+      content="344.799 referencias cruzadas, 31.102 versículos, dos traducciones y el texto original con léxico Strong."
     />
     <meta name="twitter:image" content="https://yojananyosef.github.io/Aletheia-xrefs-rs/og-image.png" />
     <link rel="manifest" href="./manifest.webmanifest" />
@@ -41,8 +41,15 @@
         "@type": "WebApplication",
         "name": "Aletheia · Referencias cruzadas de la Biblia",
         "url": "https://yojananyosef.github.io/Aletheia-xrefs-rs/",
-        "description": "Visualizador interactivo de 344.799 referencias cruzadas bíblicas con la Biblia Platense y la ASV.",
+        "description": "Visualizador interactivo de 344.799 referencias cruzadas bíblicas con la Biblia Platense, la ASV y el texto original hebreo/griego con léxico Strong.",
         "applicationCategory": "ReferenceApplication",
+        "featureList": [
+          "Diagrama de arcos de referencias cruzadas",
+          "Biblia Platense y American Standard Version",
+          "Texto original hebreo, arameo y griego",
+          "Léxico Strong y morfología",
+          "Búsqueda por referencia y filtros"
+        ],
         "operatingSystem": "Any",
         "browserRequirements": "Requires JavaScript and WebAssembly",
         "inLanguage": ["es", "en"],
@@ -612,6 +619,145 @@
       }
       .panel-empty { margin: 9px 0 0; color: var(--faint); font-size: 11px; }
       .verse-empty { color: var(--faint); font-family: var(--font-ui); font-size: 11px; font-style: italic; }
+
+      /* ---------- original-language layer ---------- */
+      .original-section { margin-top: 22px; padding-top: 15px; border-top: 1px solid var(--line); }
+      .original-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      .original-head h3 { margin: 0; }
+      .original-load {
+        flex: 0 0 auto;
+        height: 28px;
+        padding: 0 10px;
+        border: 1px solid rgba(228, 179, 99, 0.32);
+        border-radius: 6px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-size: 10px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 120ms ease, border-color 120ms ease;
+      }
+      .original-load:hover { background: rgba(228, 179, 99, 0.2); border-color: rgba(228, 179, 99, 0.5); }
+      .original-loading { color: var(--accent); }
+      .panel-error { margin: 9px 0; color: var(--danger); font-size: 11px; line-height: 1.5; }
+      .original-verse { margin-top: 13px; }
+      .original-fallback { margin: 2px 0 4px; color: var(--faint); font-size: 8.5px; }
+      .original-ref {
+        display: block;
+        margin-bottom: 3px;
+        color: var(--faint);
+        font-size: 8.5px;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+      .original-words {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 1px 0;
+        margin: 0 -4px;
+        font-family: "Noto Serif Hebrew", "DejaVu Serif", "Times New Roman", serif;
+        font-size: 19px;
+        line-height: 1.95;
+      }
+      .original-words[lang="grc"] {
+        font-family: "Noto Serif", "DejaVu Serif", "Times New Roman", serif;
+      }
+      .word {
+        appearance: none;
+        padding: 0 4px;
+        border: 1px solid transparent;
+        border-radius: 5px;
+        background: transparent;
+        color: var(--text);
+        font: inherit;
+        line-height: inherit;
+        cursor: pointer;
+        transition: background 110ms ease, border-color 110ms ease, color 110ms ease;
+      }
+      .word:hover { background: rgba(255, 255, 255, 0.065); border-color: var(--line); }
+      .word[data-selected="true"] {
+        color: var(--accent);
+        background: var(--accent-soft);
+        border-color: rgba(228, 179, 99, 0.34);
+      }
+      .lex-card {
+        margin-top: 14px;
+        padding: 12px 13px;
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.035);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+      }
+      .lex-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 7px 9px; }
+      .lex-key {
+        padding: 1px 5px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        color: var(--accent);
+        font-family: var(--font-mono);
+        font-size: 8.5px;
+        letter-spacing: 0.03em;
+      }
+      .lex-lemma { font-family: var(--font-serif); font-size: 19px; font-weight: 600; line-height: 1.2; }
+      .lex-translit { color: var(--muted); font-size: 10.5px; }
+      .lex-label {
+        color: var(--faint);
+        font-size: 8px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+      .lex-form { margin: 8px 0 0; color: var(--text-soft); font-size: 11px; line-height: 1.6; }
+      .lex-form strong { color: var(--text); font-family: var(--font-serif); font-size: 15px; font-weight: 500; }
+      .lex-form code { color: var(--muted); font-family: var(--font-mono); font-size: 9px; }
+      .lex-gloss { margin: 8px 0 0; color: var(--text); font-size: 12px; line-height: 1.5; }
+      .lex-morph { margin: 4px 0 0; color: var(--faint); font-size: 10px; }
+      .lex-meaning {
+        margin: 9px 0 0;
+        padding-top: 8px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-family: var(--font-serif);
+        font-size: 12px;
+        line-height: 1.55;
+        white-space: pre-line;
+        overflow-wrap: anywhere;
+      }
+      .lex-occurrences {
+        height: 27px;
+        margin-top: 11px;
+        padding: 0 9px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--text-soft);
+        font-size: 10px;
+        cursor: pointer;
+      }
+      .lex-occurrences:hover { background: rgba(255, 255, 255, 0.07); color: var(--text); }
+      .lex-occurrences-title {
+        margin: 10px 0 0;
+        color: var(--faint);
+        font-size: 9px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .lex-occurrences-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+      .occurrence {
+        height: 24px;
+        padding: 0 7px;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        background: transparent;
+        color: var(--muted);
+        font-size: 9.5px;
+        cursor: pointer;
+      }
+      .occurrence:hover { border-color: var(--line-strong); background: rgba(255, 255, 255, 0.06); color: var(--text); }
+      .original-source { margin: 12px 0 0; color: var(--faint); font-size: 8px; line-height: 1.5; }
 
       /* ---------- threads reader ---------- */
       .reader {

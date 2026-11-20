@@ -7,3 +7,4 @@ description = "Converts the raw Bible datasets into the app's binary formats"
 
 [dependencies]
 bible-core = { path = "../core" }
+flate2 = "1"

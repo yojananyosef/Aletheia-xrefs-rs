@@ -179,9 +179,11 @@ fn App() -> impl IntoView {
                 <a href="https://www.openbible.info/labs/cross-references/" target="_blank" rel="noopener">"OpenBible.info"</a>
                 {i18n::tr(
                     lang,
-                    " (CC BY 4.0), reindexados · Texto: Platense (Straubinger, dominio público) y ASV (dominio público).",
-                    " (CC BY 4.0), reindexed · Text: Platense (Straubinger, public domain) and ASV (public domain).",
+                    " (CC BY 4.0), reindexados · Texto: Platense (Straubinger, dominio público) y ASV (dominio público) · Original: ",
+                    " (CC BY 4.0), reindexed · Text: Platense (Straubinger, public domain) and ASV (public domain) · Original: ",
                 )}
+                <a href="https://STEPBible.org" target="_blank" rel="noopener">"STEPBible"</a>
+                {i18n::tr(lang, " (CC BY 4.0).", " (CC BY 4.0).")}
             </footer>
             <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
         </div>

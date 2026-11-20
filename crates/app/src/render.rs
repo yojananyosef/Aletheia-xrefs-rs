@@ -7,17 +7,21 @@
 //! resolution, which is what makes 153k links interactive on integrated GPUs.
 
 use std::cell::RefCell;
+use std::io::Read;
 use std::mem::size_of;
 use std::rc::Rc;
 
 use bytemuck::{Pod, Zeroable};
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlInputElement, PointerEvent, WheelEvent};
+use web_sys::{
+    CanvasRenderingContext2d, HtmlCanvasElement, HtmlInputElement, PointerEvent, WheelEvent,
+};
 
 use bible_core::format::{TranslationText, XrefData};
-use bible_core::{book_from_query, normalize_query, tables, Versification, VERSE_COUNT};
+use bible_core::words::WordsData;
+use bible_core::{VERSE_COUNT, Versification, book_from_query, normalize_query, tables};
 
 use crate::axis::{self, Layout};
 use crate::i18n::{self, Lang};
@@ -162,6 +166,8 @@ pub enum Command {
     Filters(FilterState),
     Focus(Option<(u32, u32)>),
     Search(String),
+    ShowOriginal,
+    OriginalLoaded(Result<WordsData, String>),
 }
 
 thread_local! {
@@ -195,6 +201,10 @@ struct Shared {
     votes: i16,
     filters: FilterState,
     last_input: f64,
+    original: Option<Rc<WordsData>>,
+    original_loading: bool,
+    original_error: Option<String>,
+    show_original: bool,
 }
 
 impl Shared {
@@ -220,7 +230,8 @@ impl Shared {
             return;
         }
         let anchor = self.view.0 + (anchor_px - self.layout.axis_start) / ppv;
-        let next_span = (span / factor).clamp(MIN_VIEW_SPAN.min(TOTAL_VERSES as f32), TOTAL_VERSES as f32);
+        let next_span =
+            (span / factor).clamp(MIN_VIEW_SPAN.min(TOTAL_VERSES as f32), TOTAL_VERSES as f32);
         let share = ((anchor - self.view.0) / span).clamp(0.0, 1.0);
         let start = (anchor - share * next_span).clamp(0.0, TOTAL_VERSES as f32 - next_span);
         if (start - self.view.0).abs() > 1e-4 || (next_span - span).abs() > 1e-4 {
@@ -268,8 +279,9 @@ struct Lod {
 /// a = half the pixel width, so this keeps it under ~1.2 px.
 fn bucket_of(span_px: f32) -> usize {
     let half_width = (span_px * 0.5).max(0.5);
-    let needed =
-        (half_width * std::f32::consts::PI * std::f32::consts::PI / 9.6).sqrt().ceil() as usize;
+    let needed = (half_width * std::f32::consts::PI * std::f32::consts::PI / 9.6)
+        .sqrt()
+        .ceil() as usize;
     BUCKETS
         .iter()
         .position(|segments| needed <= *segments)
@@ -399,7 +411,11 @@ fn share_current() {
         .and_then(|value| value.dyn_into::<js_sys::Function>().ok());
     if let Some(share) = share {
         let data = js_sys::Object::new();
-        let _ = js_sys::Reflect::set(&data, &JsValue::from_str("title"), &JsValue::from_str(&title));
+        let _ = js_sys::Reflect::set(
+            &data,
+            &JsValue::from_str("title"),
+            &JsValue::from_str(&title),
+        );
         let _ = js_sys::Reflect::set(
             &data,
             &JsValue::from_str("text"),
@@ -477,7 +493,9 @@ fn legacy_copy(text: &str) -> bool {
 
 pub async fn run() -> Result<(), JsValue> {
     let window = web_sys::window().ok_or_else(|| JsValue::from_str("no window"))?;
-    let document = window.document().ok_or_else(|| JsValue::from_str("no document"))?;
+    let document = window
+        .document()
+        .ok_or_else(|| JsValue::from_str("no document"))?;
     let lang = i18n::lang_of(&window);
     document.set_title(i18n::tr(
         lang,
@@ -503,10 +521,8 @@ pub async fn run() -> Result<(), JsValue> {
 
     let translation = translation_id(&window);
     let translation_url = format!("data/{translation}.bin");
-    let (xrefs, verses) = futures_util::join!(
-        fetch_bytes("data/xrefs.bin"),
-        fetch_bytes(&translation_url)
-    );
+    let (xrefs, verses) =
+        futures_util::join!(fetch_bytes("data/xrefs.bin"), fetch_bytes(&translation_url));
     let xrefs = XrefData::parse(&xrefs?).map_err(JsValue::from)?;
     let text = TranslationText::parse(&verses?).map_err(JsValue::from)?;
 
@@ -1003,6 +1019,10 @@ pub async fn run() -> Result<(), JsValue> {
         votes: initial_votes,
         filters: initial_filters,
         last_input: now,
+        original: None,
+        original_loading: false,
+        original_error: None,
+        show_original: false,
     }));
 
     let initial_active: Vec<Link> = links_all
@@ -1088,7 +1108,8 @@ pub async fn run() -> Result<(), JsValue> {
         let intro = linear < 1.0;
 
         // Commands from the UI.
-        let commands: Vec<Command> = COMMANDS.with(|commands| commands.borrow_mut().drain(..).collect());
+        let commands: Vec<Command> =
+            COMMANDS.with(|commands| commands.borrow_mut().drain(..).collect());
         for command in commands {
             match command {
                 Command::Votes(votes) => {
@@ -1141,6 +1162,64 @@ pub async fn run() -> Result<(), JsValue> {
                         ));
                     }
                 }
+                Command::ShowOriginal => {
+                    let (loaded, loading) = {
+                        let state = shared.borrow();
+                        (state.original.is_some(), state.original_loading)
+                    };
+                    if loaded {
+                        shared.borrow_mut().show_original = true;
+                        if shared.borrow().focus.is_some() {
+                            open_panel(
+                                &shared,
+                                &links_all,
+                                &versification,
+                                &text,
+                                shared.borrow().votes,
+                            );
+                        }
+                    } else if !loading {
+                        {
+                            let mut state = shared.borrow_mut();
+                            state.show_original = true;
+                            state.original_loading = true;
+                            state.original_error = None;
+                        }
+                        if shared.borrow().focus.is_some() {
+                            open_panel(
+                                &shared,
+                                &links_all,
+                                &versification,
+                                &text,
+                                shared.borrow().votes,
+                            );
+                        }
+                        wasm_bindgen_futures::spawn_local(async move {
+                            let result = load_original().await;
+                            send(Command::OriginalLoaded(result));
+                        });
+                    }
+                }
+                Command::OriginalLoaded(result) => {
+                    let (focus, votes) = {
+                        let mut state = shared.borrow_mut();
+                        state.original_loading = false;
+                        match result {
+                            Ok(words) => {
+                                state.original = Some(Rc::new(words));
+                                state.original_error = None;
+                                state.show_original = true;
+                            }
+                            Err(error) => {
+                                state.original_error = Some(error);
+                            }
+                        }
+                        (state.focus, state.votes)
+                    };
+                    if focus.is_some() {
+                        open_panel(&shared, &links_all, &versification, &text, votes);
+                    }
+                }
             }
         }
 
@@ -1154,8 +1233,7 @@ pub async fn run() -> Result<(), JsValue> {
                 links_all
                     .iter()
                     .filter(|link| {
-                        link.votes >= votes
-                            && filters.matches_source(link.source, &versification)
+                        link.votes >= votes && filters.matches_source(link.source, &versification)
                     })
                     .copied(),
             );
@@ -1202,10 +1280,8 @@ pub async fn run() -> Result<(), JsValue> {
         // the instance set. Only after a gesture settles does a large zoom
         // refine the tessellation once.
         let settled = frame_now - state.last_input > 160.0;
-        let needs_lod = force_rebuild
-            || (settled
-                && lod.built
-                && (ppv > lod.ppv * 2.0 || ppv < lod.ppv * 0.5));
+        let needs_lod =
+            force_rebuild || (settled && lod.built && (ppv > lod.ppv * 2.0 || ppv < lod.ppv * 0.5));
         let scene_dirty = state.scene_dirty || intro || needs_lod;
         if state.accumulate_dirty || intro || needs_lod {
             accumulate_dirty = true;
@@ -1264,17 +1340,14 @@ pub async fn run() -> Result<(), JsValue> {
             accumulate_dirty = true;
         }
         let highlight = focus.or(hover);
-        let highlight_changed = highlight != shared.borrow().highlighted || highlight_votes != votes;
+        let highlight_changed =
+            highlight != shared.borrow().highlighted || highlight_votes != votes;
         if highlight_changed {
             highlight_votes = votes;
             let instances = collect_highlight(&active, highlight);
             highlight_count = instances.len();
             if highlight_count > 0 {
-                queue.write_buffer(
-                    &ribbon_instance_buffer,
-                    0,
-                    bytemuck::cast_slice(&instances),
-                );
+                queue.write_buffer(&ribbon_instance_buffer, 0, bytemuck::cast_slice(&instances));
             }
             shared.borrow_mut().highlighted = highlight;
             shared.borrow_mut().scene_dirty = true;
@@ -1356,7 +1429,10 @@ pub async fn run() -> Result<(), JsValue> {
                         continue;
                     }
                     let (first, count) = template_offsets[bucket];
-                    pass.set_vertex_buffer(1, instance_buffers[buffer_index].slice(range.byte_offset..));
+                    pass.set_vertex_buffer(
+                        1,
+                        instance_buffers[buffer_index].slice(range.byte_offset..),
+                    );
                     pass.draw(first..first + count, 0..range.instances);
                 }
             }
@@ -1419,7 +1495,11 @@ pub async fn run() -> Result<(), JsValue> {
                     last_report = present;
                     set_status(&format!(
                         "{:.0} fps · {:.1} ms · {} {}",
-                        if frame_ms > 0.0 { 1000.0 / frame_ms } else { 0.0 },
+                        if frame_ms > 0.0 {
+                            1000.0 / frame_ms
+                        } else {
+                            0.0
+                        },
                         frame_ms,
                         lod.ranges.iter().map(|range| range.instances).sum::<u32>(),
                         i18n::tr(lang, "visibles", "visible")
@@ -1446,12 +1526,7 @@ pub async fn run() -> Result<(), JsValue> {
     }
 }
 
-fn apply_focus(
-    shared: &Rc<RefCell<Shared>>,
-    start: u32,
-    end: u32,
-    versification: &Versification,
-) {
+fn apply_focus(shared: &Rc<RefCell<Shared>>, start: u32, end: u32, versification: &Versification) {
     let mut state = shared.borrow_mut();
     state.focus = Some((start, end));
     // Keep the current span and pan only when the passage is outside it.
@@ -1468,7 +1543,9 @@ fn apply_focus(
         if let Some(window) = web_sys::window() {
             let reference = format!(
                 "{}.{}.{}",
-                tables::BOOK_IDS[reference.book], reference.chapter, reference.verse
+                tables::BOOK_IDS[reference.book],
+                reference.chapter,
+                reference.verse
             );
             let url = i18n::url_with(&window, &[("ref", &reference)], &[]);
             if let Ok(history) = window.history() {
@@ -1485,36 +1562,43 @@ fn open_panel(
     text: &TranslationText,
     votes: i16,
 ) {
-    let focus = shared.borrow().focus;
-    let filters = shared.borrow().filters;
+    let (focus, filters, original, show_original, loading, error) = {
+        let state = shared.borrow();
+        (
+            state.focus,
+            state.filters,
+            state.original.clone(),
+            state.show_original,
+            state.original_loading,
+            state.original_error.clone(),
+        )
+    };
     let Some((start, end)) = focus else {
         if let Some(panel) = element("panel") {
             let _ = panel.set_attribute("hidden", "");
         }
         return;
     };
-    let html = panel_html(start, end, links, versification, text, votes, filters);
+    let html = panel_html(
+        start,
+        end,
+        links,
+        versification,
+        text,
+        votes,
+        filters,
+        original.as_deref(),
+        show_original,
+        loading,
+        error.as_deref(),
+    );
     if let Some(panel) = element("panel") {
         panel.set_inner_html(&html);
         let _ = panel.remove_attribute("hidden");
-        if let Some(close) = element("panel-close") {
-            let shared = shared.clone();
-            let handler = Closure::<dyn FnMut()>::new(move || {
-                shared.borrow_mut().focus = None;
-                shared.borrow_mut().mark_scene(performance_now());
-                if let Some(panel) = element("panel") {
-                    let _ = panel.set_attribute("hidden", "");
-                }
-            });
-            let _ = close.add_event_listener_with_callback(
-                "click",
-                handler.as_ref().unchecked_ref(),
-            );
-            handler.forget();
-        }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn panel_html(
     start: u32,
     end: u32,
@@ -1523,6 +1607,10 @@ fn panel_html(
     text: &TranslationText,
     votes: i16,
     filters: FilterState,
+    original: Option<&WordsData>,
+    show_original: bool,
+    original_loading: bool,
+    original_error: Option<&str>,
 ) -> String {
     let lang = i18n::lang();
     let (Some(first), Some(last)) = (versification.ref_at(start), versification.ref_at(end)) else {
@@ -1531,7 +1619,13 @@ fn panel_html(
     let title = if start == end {
         i18n::format_verse(lang, versification, start)
     } else if first.book == last.book && first.chapter == last.chapter {
-        i18n::format_reference(lang, first.book, first.chapter, first.verse, Some(last.verse))
+        i18n::format_reference(
+            lang,
+            first.book,
+            first.chapter,
+            first.verse,
+            Some(last.verse),
+        )
     } else {
         format!(
             "{} — {}",
@@ -1596,10 +1690,24 @@ fn panel_html(
         i18n::tr(lang, "Cerrar", "Close")
     );
     html.push_str(&body);
+    html.push_str(&original_section(
+        lang,
+        start,
+        end,
+        versification,
+        original,
+        show_original,
+        original_loading,
+        original_error,
+    ));
     html.push_str(&section(
         lang,
         i18n::tr(lang, "Remite a", "Refers to"),
-        i18n::tr(lang, "adónde apunta este pasaje", "where this passage points"),
+        i18n::tr(
+            lang,
+            "adónde apunta este pasaje",
+            "where this passage points",
+        ),
         outgoing_total,
         &outgoing,
         versification,
@@ -1615,6 +1723,542 @@ fn panel_html(
         text,
     ));
     html
+}
+
+#[allow(clippy::too_many_arguments)]
+fn original_section(
+    lang: Lang,
+    start: u32,
+    end: u32,
+    versification: &Versification,
+    original: Option<&WordsData>,
+    show: bool,
+    loading: bool,
+    error: Option<&str>,
+) -> String {
+    let mut html = String::from("<section class=\"panel-section original-section\">");
+    let book = versification
+        .ref_at(start)
+        .map(|reference| reference.book)
+        .unwrap_or(0);
+    let language = original
+        .and_then(|words| words.verse_language(start))
+        .unwrap_or(if book < 39 { 0 } else { 2 });
+    let (language_name, language_attr) = match language {
+        1 => (i18n::tr(lang, "arameo", "Aramaic"), "arc"),
+        2 => (i18n::tr(lang, "griego", "Greek"), "grc"),
+        _ => (i18n::tr(lang, "hebreo", "Hebrew"), "he"),
+    };
+    html.push_str(&format!(
+        "<div class=\"original-head\"><h3>{} · <span>{}</span></h3>",
+        i18n::tr(lang, "Texto original", "Original text"),
+        language_name
+    ));
+    if !show {
+        html.push_str(&format!(
+            "<button class=\"original-load\" type=\"button\" data-original>{}</button>",
+            i18n::tr(lang, "Mostrar texto original", "Show original text")
+        ));
+        html.push_str("</div>");
+        html.push_str(&format!(
+            "<p class=\"panel-note\">{}</p>",
+            i18n::tr(
+                lang,
+                "Hebreo, arameo o griego con léxico y morfología. Se descarga una vez (5,4 MB).",
+                "Hebrew, Aramaic or Greek with lexicon and morphology. Downloaded once (5.4 MB)."
+            )
+        ));
+    } else if loading {
+        html.push_str("</div>");
+        html.push_str(&format!(
+            "<p class=\"panel-note original-loading\">{}</p>",
+            i18n::tr(lang, "Cargando texto original…", "Loading original text…")
+        ));
+    } else if let Some(error) = error {
+        html.push_str("</div>");
+        html.push_str(&format!("<p class=\"panel-error\">{}</p>", escape(error)));
+        html.push_str(&format!(
+            "<button class=\"original-load\" type=\"button\" data-original>{}</button>",
+            i18n::tr(lang, "Reintentar", "Retry")
+        ));
+    } else if let Some(words) = original {
+        html.push_str("</div>");
+        for verse in start..=end.min(start + 5) {
+            let reference = i18n::format_verse(lang, versification, verse);
+            html.push_str("<div class=\"original-verse\">");
+            html.push_str(&format!(
+                "<span class=\"original-ref\">{}</span>",
+                escape(&reference)
+            ));
+            if words.verse_is_fallback(verse) {
+                html.push_str(&format!(
+                    "<p class=\"original-fallback\">{}</p>",
+                    i18n::tr(
+                        lang,
+                        "Texto bizantino/TR (ausente en NA28).",
+                        "Byzantine/TR text (absent from NA28)."
+                    )
+                ));
+            }
+            let verse_words = words.words_in_verse(verse);
+            if verse_words.is_empty() {
+                html.push_str(&format!(
+                    "<p class=\"panel-empty\">{}</p>",
+                    i18n::tr(
+                        lang,
+                        "No incluido en el texto crítico.",
+                        "Not in the critical text."
+                    )
+                ));
+            } else {
+                html.push_str(&format!(
+                    "<div class=\"original-words\" dir=\"{}\" lang=\"{}\">",
+                    if language == 2 { "ltr" } else { "rtl" },
+                    language_attr
+                ));
+                for word in verse_words {
+                    let Some(surface) = words.surface(word) else {
+                        continue;
+                    };
+                    let translit = words
+                        .lex(word.strong_id)
+                        .map(|entry| entry.translit)
+                        .unwrap_or("");
+                    let morph = words.morph(word).unwrap_or("");
+                    let title = if translit.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" title=\"{}\"", escape(translit))
+                    };
+                    html.push_str(&format!(
+                        "<button class=\"word\" type=\"button\" data-strong=\"{}\" data-surface=\"{}\" data-morph=\"{}\"{}>{}</button>",
+                        word.strong_id,
+                        escape(surface),
+                        escape(morph),
+                        title,
+                        escape(surface)
+                    ));
+                }
+                html.push_str("</div>");
+            }
+            html.push_str("</div>");
+        }
+        html.push_str(
+            "<div id=\"lex-card\" class=\"lex-card\" role=\"region\" aria-live=\"polite\" hidden></div>",
+        );
+        let source = match language {
+            0 | 1 => i18n::tr(lang, "Texto: TAHOT (WLC)", "Text: TAHOT (WLC)"),
+            _ => i18n::tr(
+                lang,
+                "Texto: TAGNT (SBLGNT–NA28)",
+                "Text: TAGNT (SBLGNT–NA28)",
+            ),
+        };
+        html.push_str(&format!(
+            "<p class=\"original-source\">{} · {}</p>",
+            source,
+            i18n::tr(
+                lang,
+                "Léxico: STEPBible, CC BY 4.0.",
+                "Lexicon: STEPBible, CC BY 4.0."
+            )
+        ));
+    } else {
+        html.push_str("</div>");
+        html.push_str(&format!(
+            "<button class=\"original-load\" type=\"button\" data-original>{}</button>",
+            i18n::tr(lang, "Mostrar texto original", "Show original text")
+        ));
+    }
+    html.push_str("</section>");
+    html
+}
+
+fn show_lexicon(shared: &Rc<RefCell<Shared>>, strong_id: u32, surface: &str, morph: &str) {
+    let Some(original) = shared.borrow().original.clone() else {
+        return;
+    };
+    let Some(entry) = original.lex(strong_id) else {
+        return;
+    };
+    let lang = i18n::lang();
+    let count = original.occurrence_count(strong_id);
+    let hebrew = entry.key.starts_with('H');
+    let dir = if hebrew { "rtl" } else { "ltr" };
+    let lang_attr = if hebrew { "he" } else { "grc" };
+    let description = morph_description(morph, hebrew);
+
+    let mut html = String::from("<div class=\"lex-head\">");
+    html.push_str(&format!(
+        "<span class=\"lex-key\">{}</span><strong class=\"lex-lemma\" dir=\"{}\" lang=\"{}\">{}</strong>",
+        escape(entry.key),
+        dir,
+        lang_attr,
+        escape(entry.lemma)
+    ));
+    if !entry.translit.is_empty() {
+        html.push_str(&format!(
+            "<span class=\"lex-translit\">{}</span>",
+            escape(entry.translit)
+        ));
+    }
+    html.push_str("</div>");
+
+    if !surface.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"lex-form\"><span class=\"lex-label\">{}</span> <strong dir=\"{}\" lang=\"{}\">{}</strong>",
+            i18n::tr(lang, "Forma", "Form"),
+            dir,
+            lang_attr,
+            escape(surface)
+        ));
+        if !morph.is_empty() {
+            html.push_str(&format!(" <code>{}</code>", escape(morph)));
+        }
+        if !description.is_empty() {
+            html.push_str(&format!(" · {}", escape(&description)));
+        }
+        html.push_str("</p>");
+    }
+
+    html.push_str(&format!(
+        "<p class=\"lex-gloss\"><span class=\"lex-label\">{}</span> {}</p>",
+        i18n::tr(lang, "Glosa", "Gloss"),
+        if entry.gloss.is_empty() {
+            "—".to_string()
+        } else {
+            escape(entry.gloss)
+        }
+    ));
+    let category = lex_category(entry.morph, lang);
+    if !category.is_empty() && description.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"lex-morph\"><span class=\"lex-label\">{}</span> {}</p>",
+            i18n::tr(lang, "Categoría", "Category"),
+            category
+        ));
+    }
+    if !entry.meaning.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"lex-meaning\">{}</p>",
+            escape(entry.meaning)
+        ));
+    } else {
+        html.push_str(&format!(
+            "<p class=\"panel-note\">{}</p>",
+            i18n::tr(
+                lang,
+                "Sin definición en el léxico.",
+                "No lexicon definition."
+            )
+        ));
+    }
+    html.push_str(&format!(
+        "<button class=\"lex-occurrences\" type=\"button\" data-occurrences=\"{}\">{}</button>",
+        strong_id,
+        format!(
+            "{} ({})",
+            i18n::tr(lang, "Ver ocurrencias", "Show occurrences"),
+            count
+        )
+    ));
+    html.push_str("<div id=\"lex-occurrences\"></div>");
+
+    if let Some(card) = element("lex-card") {
+        card.set_inner_html(&html);
+        let _ = card.remove_attribute("hidden");
+    }
+    if let Some(panel) = element("panel") {
+        if let Ok(nodes) = panel.query_selector_all(".word") {
+            for index in 0..nodes.length() {
+                if let Some(node) = nodes
+                    .item(index)
+                    .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
+                {
+                    let selected = node
+                        .get_attribute("data-strong")
+                        .and_then(|value| value.parse::<u32>().ok())
+                        == Some(strong_id);
+                    if selected {
+                        let _ = node.set_attribute("data-selected", "true");
+                    } else {
+                        let _ = node.remove_attribute("data-selected");
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn show_occurrences(shared: &Rc<RefCell<Shared>>, strong_id: u32) {
+    let Some(original) = shared.borrow().original.clone() else {
+        return;
+    };
+    let lang = i18n::lang();
+    let versification = Versification::kjv();
+    let all = original.occurrences(strong_id);
+    let total = all.len();
+    let mut html = String::new();
+    if total == 0 {
+        html.push_str(&format!(
+            "<p class=\"panel-note\">{}</p>",
+            i18n::tr(lang, "Sin ocurrencias.", "No occurrences.")
+        ));
+    } else {
+        html.push_str(&format!(
+            "<p class=\"lex-occurrences-title\">{} {}</p>",
+            total,
+            i18n::tr(lang, "ocurrencias", "occurrences")
+        ));
+        html.push_str("<div class=\"lex-occurrences-list\">");
+        for verse in all.iter().take(80) {
+            let reference = i18n::format_verse(lang, &versification, *verse);
+            html.push_str(&format!(
+                "<button class=\"occurrence\" type=\"button\" data-occurrence=\"{}\">{}</button>",
+                verse,
+                escape(&reference)
+            ));
+        }
+        html.push_str("</div>");
+        if total > 80 {
+            html.push_str(&format!(
+                "<p class=\"panel-note\">{} 80 {} {}</p>",
+                i18n::tr(lang, "Mostrando", "Showing"),
+                i18n::tr(lang, "de", "of"),
+                total
+            ));
+        }
+    }
+    if let Some(node) = element("lex-occurrences") {
+        node.set_inner_html(&html);
+    }
+}
+
+fn morph_description(code: &str, hebrew: bool) -> String {
+    if code.is_empty() {
+        return String::new();
+    }
+    let lang = i18n::lang();
+    if hebrew {
+        let mut chars = code.chars();
+        let _ = chars.next();
+        return match chars.next() {
+            Some('V') => i18n::tr(lang, "verbo", "verb"),
+            Some('N') => match chars.next() {
+                Some('p') => i18n::tr(lang, "nombre propio", "proper noun"),
+                Some('c') => i18n::tr(lang, "nombre común", "common noun"),
+                _ => i18n::tr(lang, "nombre", "noun"),
+            },
+            Some('A') => i18n::tr(lang, "adjetivo", "adjective"),
+            Some('R') => i18n::tr(lang, "preposición", "preposition"),
+            Some('T') => i18n::tr(lang, "partícula", "particle"),
+            Some('C') => i18n::tr(lang, "conjunción", "conjunction"),
+            Some('D') => i18n::tr(lang, "adverbio", "adverb"),
+            Some('P') => i18n::tr(lang, "pronombre", "pronoun"),
+            Some('S') => i18n::tr(lang, "sufijo", "suffix"),
+            _ => "",
+        }
+        .to_string();
+    }
+
+    let (part_of_speech, rest) = code.split_once('-').unwrap_or((code, ""));
+    let noun = match part_of_speech {
+        "N" => i18n::tr(lang, "nombre", "noun"),
+        "V" => i18n::tr(lang, "verbo", "verb"),
+        "A" => i18n::tr(lang, "adjetivo", "adjective"),
+        "T" => i18n::tr(lang, "artículo", "article"),
+        "P" => i18n::tr(lang, "pronombre", "pronoun"),
+        "D" => i18n::tr(lang, "demostrativo", "demonstrative"),
+        "R" => i18n::tr(lang, "relativo", "relative"),
+        "PREP" => i18n::tr(lang, "preposición", "preposition"),
+        "CONJ" => i18n::tr(lang, "conjunción", "conjunction"),
+        "ADV" => i18n::tr(lang, "adverbio", "adverb"),
+        "X" | "PRT" => i18n::tr(lang, "partícula", "particle"),
+        "I" | "INJ" => i18n::tr(lang, "interjección", "interjection"),
+        _ => "",
+    };
+    if noun.is_empty() {
+        return String::new();
+    }
+    if part_of_speech != "V" {
+        if rest.is_empty() {
+            return noun.to_string();
+        }
+        let mut tail = rest;
+        let mut person = None;
+        if tail.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
+            person = tail.chars().next();
+            tail = &tail[1..];
+        }
+        let mut out = String::from(noun);
+        if let Some(person) = person {
+            out.push(' ');
+            out.push_str(greek_person(person, lang));
+            out.push_str(i18n::tr(lang, " persona", " person"));
+        }
+        let chars: Vec<char> = tail.chars().collect();
+        if person.is_some() && chars.len() >= 2 {
+            out.push(' ');
+            out.push_str(greek_case(chars[0], lang));
+            out.push(' ');
+            out.push_str(greek_number(chars[1], lang));
+        } else if chars.len() >= 3 {
+            out.push(' ');
+            out.push_str(greek_case(chars[0], lang));
+            out.push(' ');
+            out.push_str(greek_number(chars[1], lang));
+            out.push(' ');
+            out.push_str(greek_gender(chars[2], lang));
+        }
+        return out.trim().to_string();
+    }
+
+    let mut rest = rest;
+    let mut second = false;
+    if let Some(stripped) = rest.strip_prefix('2') {
+        rest = stripped;
+        second = true;
+    }
+    let chars: Vec<char> = rest.chars().collect();
+    if chars.len() < 3 {
+        return noun.to_string();
+    }
+    let tense = greek_tense(chars[0], lang);
+    let voice = greek_voice(chars[1], lang);
+    let mood = greek_mood(chars[2], lang);
+    let tail = rest[3..].strip_prefix('-').unwrap_or(&rest[3..]);
+    let mut out = String::from(noun);
+    if second {
+        out.push_str(i18n::tr(lang, " segundo", " second"));
+    }
+    out.push(' ');
+    out.push_str(tense);
+    out.push(' ');
+    out.push_str(voice);
+    out.push(' ');
+    out.push_str(mood);
+    let tail_chars: Vec<char> = tail.chars().collect();
+    if chars[2] == 'P' && tail_chars.len() >= 3 {
+        out.push(' ');
+        out.push_str(greek_case(tail_chars[0], lang));
+        out.push(' ');
+        out.push_str(greek_number(tail_chars[1], lang));
+        out.push(' ');
+        out.push_str(greek_gender(tail_chars[2], lang));
+    } else if tail_chars.len() >= 2 && tail_chars[0].is_ascii_digit() {
+        out.push(' ');
+        out.push_str(greek_person(tail_chars[0], lang));
+        out.push(' ');
+        out.push_str(greek_number(tail_chars[1], lang));
+    }
+    out.trim().to_string()
+}
+
+fn lex_category(code: &str, lang: Lang) -> &'static str {
+    let part = code.split_once(':').map(|(_, rest)| rest).unwrap_or(code);
+    match part.chars().next() {
+        Some('N') => i18n::tr(lang, "nombre", "noun"),
+        Some('V') => i18n::tr(lang, "verbo", "verb"),
+        Some('A') => i18n::tr(lang, "adjetivo", "adjective"),
+        Some('R') => i18n::tr(lang, "preposición", "preposition"),
+        Some('T') => i18n::tr(lang, "partícula", "particle"),
+        Some('C') => i18n::tr(lang, "conjunción", "conjunction"),
+        Some('D') => i18n::tr(lang, "adverbio", "adverb"),
+        Some('P') => i18n::tr(lang, "pronombre", "pronoun"),
+        Some('S') => i18n::tr(lang, "sufijo", "suffix"),
+        _ => "",
+    }
+}
+
+fn greek_case(code: char, lang: Lang) -> &'static str {
+    match code {
+        'N' => i18n::tr(lang, "nominativo", "nominative"),
+        'G' => i18n::tr(lang, "genitivo", "genitive"),
+        'D' => i18n::tr(lang, "dativo", "dative"),
+        'A' => i18n::tr(lang, "acusativo", "accusative"),
+        'V' => i18n::tr(lang, "vocativo", "vocative"),
+        _ => "",
+    }
+}
+
+fn greek_number(code: char, _lang: Lang) -> &'static str {
+    match code {
+        'S' => "singular",
+        'P' => "plural",
+        _ => "",
+    }
+}
+
+fn greek_gender(code: char, lang: Lang) -> &'static str {
+    match code {
+        'M' => i18n::tr(lang, "masculino", "masculine"),
+        'F' => i18n::tr(lang, "femenino", "feminine"),
+        'N' => i18n::tr(lang, "neutro", "neuter"),
+        _ => "",
+    }
+}
+
+fn greek_person(code: char, lang: Lang) -> &'static str {
+    match code {
+        '1' => i18n::tr(lang, "1.ª", "1st"),
+        '2' => i18n::tr(lang, "2.ª", "2nd"),
+        '3' => i18n::tr(lang, "3.ª", "3rd"),
+        _ => "",
+    }
+}
+
+fn greek_tense(code: char, lang: Lang) -> &'static str {
+    match code {
+        'P' => i18n::tr(lang, "presente", "present"),
+        'I' => i18n::tr(lang, "imperfecto", "imperfect"),
+        'F' => i18n::tr(lang, "futuro", "future"),
+        'A' => i18n::tr(lang, "aoristo", "aorist"),
+        'X' => i18n::tr(lang, "perfecto", "perfect"),
+        'Y' => i18n::tr(lang, "pluscuamperfecto", "pluperfect"),
+        _ => "",
+    }
+}
+
+fn greek_voice(code: char, lang: Lang) -> &'static str {
+    match code {
+        'A' => i18n::tr(lang, "activo", "active"),
+        'M' => i18n::tr(lang, "medio", "middle"),
+        'P' => i18n::tr(lang, "pasivo", "passive"),
+        'E' | 'N' => i18n::tr(lang, "medio/pasivo", "middle/passive"),
+        'D' => i18n::tr(lang, "deponente", "deponent"),
+        _ => "",
+    }
+}
+
+fn greek_mood(code: char, lang: Lang) -> &'static str {
+    match code {
+        'I' => i18n::tr(lang, "indicativo", "indicative"),
+        'S' => i18n::tr(lang, "subjuntivo", "subjunctive"),
+        'O' => i18n::tr(lang, "optativo", "optative"),
+        'M' => i18n::tr(lang, "imperativo", "imperative"),
+        'N' => i18n::tr(lang, "infinitivo", "infinitive"),
+        'P' => i18n::tr(lang, "participio", "participle"),
+        _ => "",
+    }
+}
+
+async fn load_original() -> Result<WordsData, String> {
+    let bytes = fetch_bytes("data/words.bin.gz")
+        .await
+        .map_err(|error| format!("{error:?}"))?;
+    // Servers normally hand over the gzip bytes, but a proxy or a future
+    // uncompressed file may already be decoded.
+    let raw = if bytes.starts_with(&[0x1f, 0x8b]) {
+        let mut decoder = flate2::read::GzDecoder::new(bytes.as_slice());
+        let mut raw = Vec::new();
+        decoder
+            .read_to_end(&mut raw)
+            .map_err(|error| format!("words.bin.gz: {error}"))?;
+        raw
+    } else {
+        bytes
+    };
+    WordsData::parse(&raw)
 }
 
 fn section(
@@ -1643,7 +2287,10 @@ fn section(
             .map(|r| (r.book, r.chapter))
             .unwrap_or((0, 1));
         let last = versification.ref_at(link.end).map(|r| r.verse).unwrap_or(1);
-        let first = versification.ref_at(link.start).map(|r| r.verse).unwrap_or(1);
+        let first = versification
+            .ref_at(link.start)
+            .map(|r| r.verse)
+            .unwrap_or(1);
         let reference = i18n::format_reference(lang, book, chapter, first, Some(last));
         let genre = usize::from(versification.genre_of_verse(link.start));
         let body = text
@@ -1708,13 +2355,11 @@ fn update_stats(stats: &Stats) {
     }
 }
 
-fn compute_stats(
-    links: &[Link],
-    votes: i16,
-    total: usize,
-    versification: &Versification,
-) -> Stats {
-    let nt_start = versification.book_range(39).map(|(start, _)| start).unwrap_or(0);
+fn compute_stats(links: &[Link], votes: i16, total: usize, versification: &Versification) -> Stats {
+    let nt_start = versification
+        .book_range(39)
+        .map(|(start, _)| start)
+        .unwrap_or(0);
     let mut mark = vec![false; TOTAL_VERSES as usize];
     let mut out_counts = vec![0u32; TOTAL_VERSES as usize];
     let mut diff = vec![0i32; TOTAL_VERSES as usize + 1];
@@ -1769,10 +2414,7 @@ fn update_tooltip(state: &Shared, versification: &Versification, stats: &Stats) 
     ));
     let x = state.last_x + 14.0;
     let y = state.last_y + 14.0;
-    let _ = tooltip.set_attribute(
-        "style",
-        &format!("left:{x}px; top:{y}px;"),
-    );
+    let _ = tooltip.set_attribute("style", &format!("left:{x}px; top:{y}px;"));
     let _ = tooltip.remove_attribute("hidden");
 }
 
@@ -2112,7 +2754,10 @@ fn attach_chrome(shared: &Rc<RefCell<Shared>>) {
     if let Some(range) = range {
         let shared = shared.clone();
         let handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
-            if let Some(target) = event.target().and_then(|t| t.dyn_into::<HtmlInputElement>().ok()) {
+            if let Some(target) = event
+                .target()
+                .and_then(|t| t.dyn_into::<HtmlInputElement>().ok())
+            {
                 if let Ok(value) = target.value().parse::<i16>() {
                     if let Some(label) = element("votes-value") {
                         label.set_text_content(Some(&value.to_string()));
@@ -2168,15 +2813,71 @@ fn attach_chrome(shared: &Rc<RefCell<Shared>>) {
             move |event: web_sys::KeyboardEvent| {
                 if event.key() == "Enter" {
                     event.prevent_default();
-                    if let Some(target) =
-                        event.target().and_then(|t| t.dyn_into::<HtmlInputElement>().ok())
+                    if let Some(target) = event
+                        .target()
+                        .and_then(|t| t.dyn_into::<HtmlInputElement>().ok())
                     {
                         send(Command::Search(target.value()));
                     }
                 }
             },
         );
-        let _ = search.add_event_listener_with_callback("keydown", handler.as_ref().unchecked_ref());
+        let _ =
+            search.add_event_listener_with_callback("keydown", handler.as_ref().unchecked_ref());
+        handler.forget();
+    }
+
+    if let Some(panel) = document.get_element_by_id("panel") {
+        let shared = shared.clone();
+        let handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+            let Some(target) = event
+                .target()
+                .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+            else {
+                return;
+            };
+            if let Ok(Some(_)) = target.closest("#panel-close") {
+                shared.borrow_mut().focus = None;
+                shared.borrow_mut().mark_scene(performance_now());
+                if let Some(panel) = element("panel") {
+                    let _ = panel.set_attribute("hidden", "");
+                }
+                return;
+            }
+            if let Ok(Some(_)) = target.closest("[data-original]") {
+                send(Command::ShowOriginal);
+                return;
+            }
+            if let Ok(Some(button)) = target.closest("[data-strong]") {
+                let strong = button
+                    .get_attribute("data-strong")
+                    .and_then(|value| value.parse::<u32>().ok());
+                let surface = button.get_attribute("data-surface").unwrap_or_default();
+                let morph = button.get_attribute("data-morph").unwrap_or_default();
+                if let Some(strong) = strong {
+                    show_lexicon(&shared, strong, &surface, &morph);
+                }
+                return;
+            }
+            if let Ok(Some(button)) = target.closest("[data-occurrences]") {
+                if let Some(id) = button
+                    .get_attribute("data-occurrences")
+                    .and_then(|value| value.parse::<u32>().ok())
+                {
+                    show_occurrences(&shared, id);
+                }
+                return;
+            }
+            if let Ok(Some(button)) = target.closest("[data-occurrence]") {
+                if let Some(verse) = button
+                    .get_attribute("data-occurrence")
+                    .and_then(|value| value.parse::<u32>().ok())
+                {
+                    send(Command::Focus(Some((verse, verse))));
+                }
+            }
+        });
+        let _ = panel.add_event_listener_with_callback("click", handler.as_ref().unchecked_ref());
         handler.forget();
     }
 }
@@ -2283,7 +2984,10 @@ pub(crate) fn parse_reference(input: &str, versification: &Versification) -> Opt
     };
     let from = index(start)?;
     let to = index(end.max(start)).unwrap_or(from);
-    Some((from.min(chapter_end).max(chapter_start), to.min(chapter_end)))
+    Some((
+        from.min(chapter_end).max(chapter_start),
+        to.min(chapter_end),
+    ))
 }
 
 pub(crate) fn query_flag(window: &web_sys::Window, name: &str) -> bool {
@@ -2293,7 +2997,12 @@ pub(crate) fn query_flag(window: &web_sys::Window, name: &str) -> bool {
         .unwrap_or_default()
         .trim_start_matches('?')
         .split('&')
-        .any(|pair| pair == name || pair.strip_prefix(name).is_some_and(|rest| rest.starts_with('=')))
+        .any(|pair| {
+            pair == name
+                || pair
+                    .strip_prefix(name)
+                    .is_some_and(|rest| rest.starts_with('='))
+        })
 }
 
 /// Translation file id from `?t=` (Platense by default in Spanish).
@@ -2339,8 +3048,8 @@ fn vote_weight(votes: i16) -> f32 {
 
 fn genre_color(genre: u8) -> u32 {
     const HEX: [u32; 10] = [
-        0xeb568f, 0xcd4805, 0xb48f05, 0xcd489d, 0x88a00d, 0x17a7b4, 0x119245, 0x0593e6,
-        0x03ac8f, 0xa06aec,
+        0xeb568f, 0xcd4805, 0xb48f05, 0xcd489d, 0x88a00d, 0x17a7b4, 0x119245, 0x0593e6, 0x03ac8f,
+        0xa06aec,
     ];
     let rgb = HEX[usize::from(genre).min(HEX.len() - 1)];
     ((rgb >> 16) & 0xff) | (((rgb >> 8) & 0xff) << 8) | ((rgb & 0xff) << 16) | (0xff << 24)

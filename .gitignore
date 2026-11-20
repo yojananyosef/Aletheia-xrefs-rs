@@ -2,5 +2,6 @@
 **/dist
 data/raw/
 crates/app/data/*.bin
+crates/app/data/*.bin.gz
 __pycache__/
 *.pyc

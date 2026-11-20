@@ -15,5 +15,18 @@ third parties and keep their own licenses, which require attribution:
 - **American Standard Version (ASV, `eng-asv`)** — public domain.
   Source: eBible.org.
 
+## Original languages and lexicon
+
+- **STEPBible Data** (TAHOT, TAGNT, TBESH, TBESG), created by Tyndale House
+  Cambridge and curated by STEPBible.org — CC BY 4.0.
+  <https://github.com/STEPBible/STEPBible-Data>
+  - TAHOT is based on the Westminster Leningrad Codex (WLC) via OpenScriptures.
+  - TAGNT amalgamates NA27/28, SBLGNT, THGNT, TR, Byz and other editions;
+    SBLGNT is CC BY 4.0. The app shows the NA27/28 base and falls back to the
+    Byzantine/TR text where a KJV verse has no NA witness.
+  - TBESH and TBESG are brief lexicons based on abridged BDB and Abbott-Smith.
+
 The KJV versification (chapter/verse counts) is used only as a canonical
-coordinate system; its text is not bundled.
+coordinate system; its text is not bundled. STEPBible's lexical definitions are
+shown in their original English; the interface and the morphology descriptions
+are localized.
