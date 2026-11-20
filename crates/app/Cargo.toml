@@ -1,0 +1,48 @@
+[package]
+name = "bible-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Bible cross-reference arcs and threads explorer (Leptos + wgpu)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "bible-app"
+path = "src/main.rs"
+
+[dependencies]
+bible-core = { path = "../core" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+leptos = { version = "0.8", features = ["csr"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "Window",
+    "Document",
+    "Element",
+    "HtmlElement",
+    "HtmlCanvasElement",
+    "Response",
+    "Performance",
+    "Event",
+    "MouseEvent",
+    "PointerEvent",
+    "WheelEvent",
+    "KeyboardEvent",
+    "DomRect",
+    "CanvasRenderingContext2d",
+    "TextMetrics",
+    "HtmlInputElement",
+    "HtmlSelectElement",
+    "History",
+    "Location",
+    "console",
+] }
+wgpu = { version = "30", default-features = false, features = ["std", "webgpu", "webgl", "wgsl"] }
+bytemuck = { version = "1", features = ["derive"] }
+console_error_panic_hook = "0.1"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }

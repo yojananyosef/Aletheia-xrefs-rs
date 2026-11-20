@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="canonical" href="../?view=threads" />
+    <title>Hilos · Referencias cruzadas de la Biblia</title>
+    <script>
+      // Keep ?lang=, ?t= and ?ref= when the legacy /threads/ URL is opened.
+      const params = new URLSearchParams(location.search);
+      params.set("view", "threads");
+      location.replace("../?" + params.toString());
+    </script>
+  </head>
+  <body>
+    <noscript><a href="../?view=threads">Ir a la vista de Hilos</a></noscript>
+  </body>
+</html>

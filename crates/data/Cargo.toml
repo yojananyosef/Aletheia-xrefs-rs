@@ -1,0 +1,9 @@
+[package]
+name = "bible-data"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Converts the raw Bible datasets into the app's binary formats"
+
+[dependencies]
+bible-core = { path = "../core" }

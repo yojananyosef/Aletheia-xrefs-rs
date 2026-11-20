@@ -1,0 +1,6 @@
+/target
+**/dist
+data/raw/
+crates/app/data/*.bin
+__pycache__/
+*.pyc
