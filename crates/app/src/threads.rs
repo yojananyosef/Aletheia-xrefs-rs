@@ -9,10 +9,12 @@ use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlElement};
 
 use bible_core::format::{TranslationText, XrefData};
+use bible_core::words::WordsData;
 use bible_core::{tables, VerseRef, Versification};
 
 use crate::axis::GENRE_HEX;
 use crate::i18n;
+use crate::original;
 
 const MIN_VOTES: i16 = 4;
 const SPINE_TOP: f64 = 16.0;
@@ -125,6 +127,12 @@ struct State {
     pixel_width: u32,
     pixel_height: u32,
     compact: bool,
+    show_original: bool,
+    original: Option<Rc<WordsData>>,
+    original_loading: bool,
+    original_error: Option<String>,
+    /// Strong id, surface and morphology of the word whose card is open.
+    lexicon: Option<(u32, String, String)>,
 }
 
 pub struct Threads {
@@ -191,6 +199,12 @@ impl Threads {
             }
         }
 
+        let show_original = crate::render::query_param(
+            web_sys::window().as_ref().ok_or_else(|| JsValue::from_str("no window"))?,
+            "original",
+        )
+        .as_deref()
+            == Some("1");
         let state = State {
             book: 0,
             chapter: 1,
@@ -204,6 +218,11 @@ impl Threads {
             pixel_width: 0,
             pixel_height: 0,
             compact: false,
+            show_original,
+            original: None,
+            original_loading: false,
+            original_error: None,
+            lexicon: None,
         };
         let threads = Rc::new(Self {
             links,
@@ -228,7 +247,7 @@ impl Threads {
             state.selected = None;
             state.hover_verse = None;
         }
-        self.render_chapter();
+        self.render_chapter(false);
         self.update_url();
     }
 
@@ -255,19 +274,6 @@ impl Threads {
             let _ = button.add_event_listener_with_callback("click", handler.as_ref().unchecked_ref());
             handler.forget();
         }
-        if let Some(button) = document.get_element_by_id("threads-close") {
-            let this = self.clone();
-            let handler = Closure::<dyn FnMut()>::new(move || {
-                this.state.borrow_mut().selected = None;
-                if let Some(panel) = document.get_element_by_id("threads-panel") {
-                    let _ = panel.set_attribute("hidden", "");
-                }
-                this.draw();
-            });
-            let _ = button.add_event_listener_with_callback("click", handler.as_ref().unchecked_ref());
-            handler.forget();
-        }
-
         // Hover and click on verses (event delegation: chapters replace the DOM).
         let this = self.clone();
         let hover = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(move |event: web_sys::PointerEvent| {
@@ -298,20 +304,131 @@ impl Threads {
 
         let this = self.clone();
         let click = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
-            let verse = event
+            let target = event
                 .target()
-                .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-                .and_then(|element| element.closest(".verse").ok().flatten())
+                .and_then(|target| target.dyn_into::<web_sys::Element>().ok());
+            let Some(target) = target else {
+                return;
+            };
+            if let Ok(Some(button)) = target.closest("[data-strong]") {
+                let verse = button
+                    .closest(".verse")
+                    .ok()
+                    .flatten()
+                    .and_then(|element| element.get_attribute("data-v"))
+                    .and_then(|value| value.parse::<u32>().ok());
+                if let (Some(verse), Some((strong, surface, morph))) =
+                    (verse, original::word_of(&button))
+                {
+                    {
+                        let mut state = this.state.borrow_mut();
+                        state.selected = Some(verse);
+                        state.lexicon = Some((strong, surface, morph));
+                    }
+                    this.draw();
+                    this.update_url();
+                    this.open_panel(verse);
+                }
+                return;
+            }
+            let verse = target
+                .closest(".verse")
+                .ok()
+                .flatten()
                 .and_then(|element| element.get_attribute("data-v"))
                 .and_then(|value| value.parse::<u32>().ok());
             if let Some(verse) = verse {
-                this.state.borrow_mut().selected = Some(verse);
+                {
+                    let mut state = this.state.borrow_mut();
+                    state.selected = Some(verse);
+                    state.lexicon = None;
+                }
                 this.draw();
+                this.update_url();
                 this.open_panel(verse);
             }
         });
         let _ = self.reader.add_event_listener_with_callback("click", click.as_ref().unchecked_ref());
         click.forget();
+
+        if let Some(panel) = document.get_element_by_id("threads-panel") {
+            let this = self.clone();
+            let handler =
+                Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+                    let Some(target) = event
+                        .target()
+                        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+                    else {
+                        return;
+                    };
+                    if let Ok(Some(_)) = target.closest("#threads-close") {
+                        {
+                            let mut state = this.state.borrow_mut();
+                            state.selected = None;
+                            state.lexicon = None;
+                        }
+                        this.update_url();
+                        if let Some(panel) = web_sys::window()
+                            .and_then(|window| window.document())
+                            .and_then(|document| document.get_element_by_id("threads-panel"))
+                        {
+                            let _ = panel.set_attribute("hidden", "");
+                        }
+                        this.draw();
+                        return;
+                    }
+                    if let Ok(Some(button)) = target.closest("[data-strong]") {
+                        let verse = this.state.borrow().selected;
+                        if let (Some(verse), Some((strong, surface, morph))) =
+                            (verse, original::word_of(&button))
+                        {
+                            this.state.borrow_mut().lexicon =
+                                Some((strong, surface, morph));
+                            this.open_panel(verse);
+                        }
+                        return;
+                    }
+                    if let Ok(Some(button)) = target.closest("[data-occurrences]") {
+                        let words = this.state.borrow().original.clone();
+                        if let (Some(words), Some(id)) = (
+                            words,
+                            button
+                                .get_attribute("data-occurrences")
+                                .and_then(|value| value.parse::<u32>().ok()),
+                        ) {
+                            let html =
+                                original::occurrences_html(&words, id, i18n::lang());
+                            original::fill("threads-lex-occurrences", &html, true);
+                        }
+                        return;
+                    }
+                    if let Ok(Some(button)) = target.closest("[data-occurrence]") {
+                        if let Some(verse) = button
+                            .get_attribute("data-occurrence")
+                            .and_then(|value| value.parse::<u32>().ok())
+                        {
+                            this.go_to_verse(verse);
+                        }
+                        return;
+                    }
+                    if let Ok(Some(button)) = target.closest("[data-lemma]") {
+                        if let (Some(key), Some(window)) = (
+                            button.get_attribute("data-lemma"),
+                            web_sys::window(),
+                        ) {
+                            let reference = button.get_attribute("data-ref");
+                            let url =
+                                original::lemma_url(&window, &key, reference.as_deref());
+                            let _ = window.location().set_href(&url);
+                        }
+                    }
+                });
+            let _ = panel.add_event_listener_with_callback(
+                "click",
+                handler.as_ref().unchecked_ref(),
+            );
+            handler.forget();
+        }
 
         // Redraw on scroll: threads only leave from the verses on screen.
         let this = self.clone();
@@ -393,11 +510,23 @@ impl Threads {
         None
     }
 
-    fn render_chapter(self: &Rc<Self>) {
+    fn render_chapter(self: &Rc<Self>, preserve_scroll: bool) {
         let lang = i18n::lang();
-        let (book, chapter) = {
+        let (book, chapter, show_original, original, original_loading, original_error, scroll) = {
             let state = self.state.borrow();
-            (state.book, state.chapter)
+            (
+                state.book,
+                state.chapter,
+                state.show_original,
+                state.original.clone(),
+                state.original_loading,
+                state.original_error.clone(),
+                if preserve_scroll {
+                    self.reader_scroll.scroll_top()
+                } else {
+                    0
+                },
+            )
         };
         let (start, end) = self
             .versification
@@ -409,23 +538,11 @@ impl Threads {
         let name = format!("{} {}", i18n::book_name(lang, book), chapter);
         let prev = self
             .previous_chapter()
-            .map(|(book, chapter)| {
-                format!(
-                    "{} {}",
-                    i18n::book_name(lang, book),
-                    chapter
-                )
-            })
+            .map(|(book, chapter)| format!("{} {}", i18n::book_name(lang, book), chapter))
             .unwrap_or_default();
         let next = self
             .next_chapter()
-            .map(|(book, chapter)| {
-                format!(
-                    "{} {}",
-                    i18n::book_name(lang, book),
-                    chapter
-                )
-            })
+            .map(|(book, chapter)| format!("{} {}", i18n::book_name(lang, book), chapter))
             .unwrap_or_default();
 
         let direction = self.state.borrow().direction;
@@ -459,13 +576,36 @@ impl Threads {
                 .map(|reference| reference.verse)
                 .unwrap_or(1);
             let count = counts[(verse - start) as usize];
+            let original_html = if show_original {
+                if let Some(words) = original.as_deref() {
+                    let mut html = String::new();
+                    if words.verse_is_fallback(verse) {
+                        html.push_str(&original::fallback_note(lang));
+                    }
+                    html.push_str(&original::words_html(words, verse, "verse-original"));
+                    html
+                } else if original_loading {
+                    format!(
+                        "<span class=\"verse-original-loading\">{}</span>",
+                        i18n::tr(lang, "cargando…", "loading…")
+                    )
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
             verses.push_str(&format!(
-                "<p class=\"verse\" data-v=\"{verse}\"><span class=\"verse-text\"><span class=\"verse-num\">{number}</span>{}</span><span class=\"verse-count\">{count}</span></p>",
-                content
+                "<div class=\"verse\" data-v=\"{verse}\"><span class=\"verse-body\"><span class=\"verse-text\"><span class=\"verse-num\">{number}</span>{content}</span>{original_html}</span><span class=\"verse-count\">{count}</span></div>"
             ));
         }
+        let toggle = if show_original {
+            i18n::tr(lang, "Ocultar original", "Hide original")
+        } else {
+            i18n::tr(lang, "Texto original", "Original text")
+        };
         let header = format!(
-            "<header class=\"chapter-head\"><span class=\"chapter-kicker\"><i style=\"background:{}\"></i>{} · {}</span><h2 id=\"threads-title\">{}</h2><nav class=\"chapter-nav\"><button id=\"threads-prev\" type=\"button\" title=\"{} ({prev})\">‹</button><button id=\"threads-next\" type=\"button\" title=\"{} ({next})\">›</button></nav><div class=\"threads-directions\"><button id=\"dir-out\" type=\"button\"{}>{}</button><button id=\"dir-in\" type=\"button\"{}>{}</button><button id=\"dir-both\" type=\"button\"{}>{}</button></div></header>",
+            "<header class=\"chapter-head\"><span class=\"chapter-kicker\"><i style=\"background:{}\"></i>{} · {}</span><h2 id=\"threads-title\">{}</h2><nav class=\"chapter-nav\"><button id=\"threads-prev\" type=\"button\" title=\"{} ({prev})\">‹</button><button id=\"threads-next\" type=\"button\" title=\"{} ({next})\">›</button></nav><div class=\"threads-controls\"><div class=\"threads-directions\"><button id=\"dir-out\" type=\"button\"{}>{}</button><button id=\"dir-in\" type=\"button\"{}>{}</button><button id=\"dir-both\" type=\"button\"{}>{}</button></div><button id=\"threads-original\" class=\"threads-original\" type=\"button\" aria-pressed=\"{}\">{}</button></div></header>",
             GENRE_HEX[genre],
             escape(genre_name),
             testament,
@@ -478,9 +618,31 @@ impl Threads {
             i18n::tr(lang, "Citado por", "Cited by"),
             if direction == Direction::Both { " class=\"active\"" } else { "" },
             i18n::tr(lang, "Ambos", "Both"),
+            if show_original { "true" } else { "false" },
+            toggle,
         );
-        self.reader.set_inner_html(&format!("{header}<div class=\"verses\">{verses}</div>"));
-        self.reader_scroll.set_scroll_top(0);
+        let status = if show_original && original_loading {
+            format!(
+                "<p class=\"threads-original-note\">{}</p>",
+                i18n::tr(lang, "Cargando texto original…", "Loading original text…")
+            )
+        } else if show_original {
+            original_error
+                .as_deref()
+                .map(|error| {
+                    format!(
+                        "<p class=\"threads-original-note panel-error\">{} <button id=\"threads-original-retry\" type=\"button\">{}</button></p>",
+                        escape(error),
+                        i18n::tr(lang, "Reintentar", "Retry")
+                    )
+                })
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        self.reader
+            .set_inner_html(&format!("{header}{status}<div class=\"verses\">{verses}</div>"));
+        self.reader_scroll.set_scroll_top(scroll);
         // Fresh nodes: rebind the chapter buttons.
         self.attach_chapter_buttons();
         self.attach_direction_buttons();
@@ -501,7 +663,11 @@ impl Threads {
             let handler = Closure::<dyn FnMut()>::new(move || {
                 if this.state.borrow().direction != direction {
                     this.state.borrow_mut().direction = direction;
-                    this.render_chapter();
+                    this.render_chapter(true);
+                    let selected = this.state.borrow().selected;
+                    if let Some(verse) = selected {
+                        this.open_panel(verse);
+                    }
                 }
             });
             let _ = button.add_event_listener_with_callback("click", handler.as_ref().unchecked_ref());
@@ -530,6 +696,83 @@ impl Threads {
             });
             let _ = button.add_event_listener_with_callback("click", handler.as_ref().unchecked_ref());
             handler.forget();
+        }
+        if let Some(button) = document.get_element_by_id("threads-original") {
+            let this = self.clone();
+            let handler = Closure::<dyn FnMut()>::new(move || {
+                this.toggle_original();
+            });
+            let _ =
+                button.add_event_listener_with_callback("click", handler.as_ref().unchecked_ref());
+            handler.forget();
+        }
+        if let Some(button) = document.get_element_by_id("threads-original-retry") {
+            let this = self.clone();
+            let handler = Closure::<dyn FnMut()>::new(move || {
+                this.start_original_load();
+            });
+            let _ =
+                button.add_event_listener_with_callback("click", handler.as_ref().unchecked_ref());
+            handler.forget();
+        }
+    }
+
+    pub fn start_original_load(self: &Rc<Self>) {
+        {
+            let state = self.state.borrow();
+            if state.original.is_some() || state.original_loading {
+                return;
+            }
+        }
+        {
+            let mut state = self.state.borrow_mut();
+            state.show_original = true;
+            state.original_loading = true;
+            state.original_error = None;
+        }
+        self.render_chapter(true);
+        self.update_url();
+        let this = self.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            match original::load().await {
+                Ok(words) => {
+                    let mut state = this.state.borrow_mut();
+                    state.original = Some(words);
+                    state.original_loading = false;
+                    state.original_error = None;
+                }
+                Err(error) => {
+                    let mut state = this.state.borrow_mut();
+                    state.original_loading = false;
+                    state.original_error = Some(error);
+                }
+            }
+            this.render_chapter(true);
+            let selected = this.state.borrow().selected;
+            if let Some(verse) = selected {
+                this.scroll_to_verse(verse);
+                this.open_panel(verse);
+            }
+        });
+    }
+
+    fn toggle_original(self: &Rc<Self>) {
+        let show = {
+            let mut state = self.state.borrow_mut();
+            state.show_original = !state.show_original;
+            state.show_original
+        };
+        if show && self.state.borrow().original.is_none() {
+            self.start_original_load();
+            return;
+        }
+        self.state.borrow_mut().lexicon = None;
+        self.render_chapter(true);
+        self.update_url();
+        let selected = self.state.borrow().selected;
+        if let Some(verse) = selected {
+            self.scroll_to_verse(verse);
+            self.open_panel(verse);
         }
     }
 
@@ -776,6 +1019,64 @@ impl Threads {
         } else {
             escape(&body)
         };
+        let (lexicon, show_original, words_data, original_loading) = {
+            let state = self.state.borrow();
+            (
+                state.lexicon.clone(),
+                state.show_original,
+                state.original.clone(),
+                state.original_loading,
+            )
+        };
+        let osis_reference = format!(
+            "{}.{}.{}",
+            tables::BOOK_IDS[reference.book], reference.chapter, reference.verse
+        );
+        let lexicon_html = match (lexicon, words_data.as_deref()) {
+            (Some((strong, surface, morph)), Some(words)) => format!(
+                "<div class=\"lex-card threads-lex-card\" role=\"region\" aria-live=\"polite\">{}</div>",
+                original::card_html(
+                    words,
+                    strong,
+                    &surface,
+                    &morph,
+                    lang,
+                    "threads-lex-occurrences",
+                    Some(&osis_reference)
+                )
+            ),
+            _ => String::new(),
+        };
+        let original_html = if show_original {
+            if let Some(words) = words_data.as_deref() {
+                let language = match words.verse_language(verse) {
+                    Some(1) => i18n::tr(lang, "arameo", "Aramaic"),
+                    Some(2) => i18n::tr(lang, "griego", "Greek"),
+                    _ => i18n::tr(lang, "hebreo", "Hebrew"),
+                };
+                let fallback = if words.verse_is_fallback(verse) {
+                    original::fallback_note(lang)
+                } else {
+                    String::new()
+                };
+                format!(
+                    "<section class=\"panel-section original-section\"><h3>{} <span>{}</span></h3>{}{}</section>",
+                    i18n::tr(lang, "Texto original", "Original text"),
+                    language,
+                    fallback,
+                    original::words_html(words, verse, "original-words")
+                )
+            } else if original_loading {
+                format!(
+                    "<p class=\"panel-note original-loading\">{}</p>",
+                    i18n::tr(lang, "Cargando texto original…", "Loading original text…")
+                )
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
         let mut outgoing = Vec::new();
         let mut incoming = Vec::new();
         for link in &self.links {
@@ -821,7 +1122,7 @@ impl Threads {
             html
         };
         panel.set_inner_html(&format!(
-            "<header class=\"panel-head\"><div><span class=\"panel-kicker\"><i style=\"background:{}\"></i>{} · {}</span><h2>{}</h2></div><button id=\"threads-close\" class=\"panel-close\" type=\"button\" aria-label=\"{}\">×</button></header><p class=\"panel-verse\">{}</p><section class=\"panel-section\"><h3>{} <span>{}</span></h3>{}</section><section class=\"panel-section\"><h3>{} <span>{}</span></h3>{}</section>",
+            "<header class=\"panel-head\"><div><span class=\"panel-kicker\"><i style=\"background:{}\"></i>{} · {}</span><h2>{}</h2></div><button id=\"threads-close\" class=\"panel-close\" type=\"button\" aria-label=\"{}\">×</button></header><p class=\"panel-verse\">{}</p>{lexicon_html}{original_html}<section class=\"panel-section\"><h3>{} <span>{}</span></h3>{}</section><section class=\"panel-section\"><h3>{} <span>{}</span></h3>{}</section>",
             GENRE_HEX[genre],
             escape(i18n::genre_name(lang, genre)),
             i18n::testament(lang, reference.book),
@@ -837,40 +1138,73 @@ impl Threads {
         ));
         let _ = panel.remove_attribute("hidden");
         self.draw();
-        if let Some(close) = web_sys::window()
-            .and_then(|window| window.document())
-            .and_then(|document| document.get_element_by_id("threads-close"))
+    }
+
+    fn go_to_verse(self: &Rc<Self>, verse: u32) {
+        let Some(reference) = self.versification.ref_at(verse) else {
+            return;
+        };
         {
-            let this = self.clone();
-            let handler = Closure::<dyn FnMut()>::new(move || {
-                this.state.borrow_mut().selected = None;
-                if let Some(panel) = web_sys::window()
-                    .and_then(|window| window.document())
-                    .and_then(|document| document.get_element_by_id("threads-panel"))
-                {
-                    let _ = panel.set_attribute("hidden", "");
-                }
-                this.draw();
-            });
-            let _ = close.add_event_listener_with_callback("click", handler.as_ref().unchecked_ref());
-            handler.forget();
+            let mut state = self.state.borrow_mut();
+            state.lexicon = None;
+        }
+        self.set_passage(reference.book, reference.chapter);
+        self.focus_verse(verse);
+    }
+
+    fn focus_verse(self: &Rc<Self>, verse: u32) {
+        {
+            let mut state = self.state.borrow_mut();
+            state.selected = Some(verse);
+            state.lexicon = None;
+        }
+        self.scroll_to_verse(verse);
+        self.update_url();
+        self.draw();
+        self.open_panel(verse);
+    }
+
+    fn scroll_to_verse(&self, verse: u32) {
+        if let Some(document) = web_sys::window().and_then(|window| window.document()) {
+            if let Ok(Some(element)) = document.query_selector(&format!(
+                ".verse[data-v=\"{verse}\"]"
+            )) {
+                let rect = element.get_bounding_client_rect();
+                let container = self.reader_scroll.get_bounding_client_rect();
+                let header = document
+                    .query_selector(".chapter-head")
+                    .ok()
+                    .flatten()
+                    .map(|node| node.get_bounding_client_rect().height())
+                    .unwrap_or(0.0);
+                let top = self.reader_scroll.scroll_top()
+                    + (rect.top() - container.top()) as i32
+                    - header as i32
+                    - 18;
+                self.reader_scroll.set_scroll_top(top.max(0));
+            }
         }
     }
 
     fn update_url(&self) {
-        let (book, chapter) = {
+        let (book, chapter, selected, show_original) = {
             let state = self.state.borrow();
-            (state.book, state.chapter)
+            (state.book, state.chapter, state.selected, state.show_original)
         };
         let Some(window) = web_sys::window() else {
             return;
         };
-        let reference = format!("{}.{}.1", tables::BOOK_IDS[book], chapter);
-        let url = i18n::url_with(
-            &window,
-            &[("view", "threads"), ("ref", &reference)],
-            &[],
-        );
+        let verse = selected
+            .and_then(|verse| self.versification.ref_at(verse))
+            .filter(|reference| reference.book == book && reference.chapter == chapter)
+            .map(|reference| reference.verse)
+            .unwrap_or(1);
+        let reference = format!("{}.{}.{}", tables::BOOK_IDS[book], chapter, verse);
+        let mut set = vec![("view", "threads"), ("ref", reference.as_str())];
+        if show_original {
+            set.push(("original", "1"));
+        }
+        let url = i18n::url_with(&window, &set, &["original"]);
         if let Ok(history) = window.history() {
             let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&url));
         }
@@ -939,8 +1273,9 @@ pub async fn run(xrefs: XrefData, text: TranslationText) -> Result<(), JsValue> 
     crate::render::attach_share(&window);
     i18n::attach_language_select(&window);
     let threads = Threads::new(&xrefs, text, Versification::kjv())?;
-    let initial = crate::render::query_param(&window, "ref")
-        .and_then(|reference| crate::render::parse_reference(&reference, &versification))
+    let requested = crate::render::query_param(&window, "ref")
+        .and_then(|reference| crate::render::parse_reference(&reference, &versification));
+    let initial = requested
         .and_then(|(start, _)| versification.ref_at(start))
         .unwrap_or(VerseRef {
             book: 42,
@@ -948,6 +1283,12 @@ pub async fn run(xrefs: XrefData, text: TranslationText) -> Result<(), JsValue> 
             verse: 16,
         });
     threads.set_passage(initial.book, initial.chapter);
+    if let Some((start, _)) = requested {
+        threads.focus_verse(start);
+    }
+    if crate::render::query_param(&window, "original").as_deref() == Some("1") {
+        threads.start_original_load();
+    }
     // Keep the value alive for the session; the closures hold their own Rc.
     std::mem::forget(threads);
     Ok(())

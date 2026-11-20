@@ -7,7 +7,6 @@
 //! resolution, which is what makes 153k links interactive on integrated GPUs.
 
 use std::cell::RefCell;
-use std::io::Read;
 use std::mem::size_of;
 use std::rc::Rc;
 
@@ -28,6 +27,8 @@ use crate::i18n::{self, Lang};
 
 const BUCKETS: [usize; 7] = [4, 6, 8, 12, 16, 24, 32];
 const MIN_VOTES: i16 = 4;
+/// Packed like `genre_color`: RGBA little-endian (`0xAABBGGRR`).
+const LEMMA_COLOR: u32 = 0xff63b3e4;
 const MIN_VIEW_SPAN: f32 = 24.0;
 const INTRO_MS: f64 = 800.0;
 const SURFACE: [f32; 3] = [13.0 / 255.0, 13.0 / 255.0, 13.0 / 255.0];
@@ -161,13 +162,38 @@ impl FilterState {
     }
 }
 
+#[derive(Clone)]
+pub struct LemmaFilter {
+    pub key: String,
+    pub gloss: String,
+    pub verses: Rc<Vec<bool>>,
+    pub verse_count: usize,
+}
+
+impl LemmaFilter {
+    fn matches(&self, link: &Link) -> bool {
+        self.verses
+            .get(link.source as usize)
+            .copied()
+            .unwrap_or(false)
+            && (link.start..=link.end).any(|verse| {
+                self.verses
+                    .get(verse as usize)
+                    .copied()
+                    .unwrap_or(false)
+            })
+    }
+}
+
 pub enum Command {
     Votes(i16),
     Filters(FilterState),
     Focus(Option<(u32, u32)>),
     Search(String),
     ShowOriginal,
-    OriginalLoaded(Result<WordsData, String>),
+    OriginalLoaded(Result<Rc<WordsData>, String>),
+    Lemma(Option<String>),
+    LemmaLoaded(Result<(Rc<WordsData>, LemmaFilter), String>),
 }
 
 thread_local! {
@@ -205,6 +231,10 @@ struct Shared {
     original_loading: bool,
     original_error: Option<String>,
     show_original: bool,
+    lemma: Option<LemmaFilter>,
+    lemma_request: Option<String>,
+    lemma_loading: bool,
+    lemma_error: Option<String>,
 }
 
 impl Shared {
@@ -347,6 +377,114 @@ fn filters_from_url(window: &web_sys::Window) -> FilterState {
                     .position(|candidate| *candidate == value)
             })
             .map(|book| book as u8),
+    }
+}
+
+fn lemma_key_from_url(window: &web_sys::Window) -> Option<String> {
+    i18n::query_param(window, "lemma")
+        .map(|value| value.trim().to_ascii_uppercase())
+        .filter(|value| !value.is_empty())
+}
+
+pub fn build_lemma_filter(words: &WordsData, key: &str) -> Result<LemmaFilter, String> {
+    let lang = i18n::lang();
+    let id = words.lex_id_fuzzy(key).ok_or_else(|| {
+        format!("{}: {key}", i18n::tr(lang, "Lema desconocido", "Unknown lemma"))
+    })?;
+    let entry = words.lex(id).ok_or_else(|| {
+        format!("{}: {key}", i18n::tr(lang, "Lema sin léxico", "Lemma without lexicon"))
+    })?;
+    let mut verses = vec![false; words.verse_count as usize];
+    let occurrences = words.occurrences(id);
+    for verse in &occurrences {
+        if let Some(slot) = verses.get_mut(*verse as usize) {
+            *slot = true;
+        }
+    }
+    let gloss = if entry.es_gloss.is_empty() {
+        entry.gloss
+    } else {
+        entry.es_gloss
+    };
+    Ok(LemmaFilter {
+        key: entry.key.to_string(),
+        gloss: gloss.to_string(),
+        verses: Rc::new(verses),
+        verse_count: occurrences.len(),
+    })
+}
+
+fn link_visible(
+    link: &Link,
+    votes: i16,
+    filters: FilterState,
+    lemma: Option<&LemmaFilter>,
+    versification: &Versification,
+) -> bool {
+    link.votes >= votes
+        && filters.matches_source(link.source, versification)
+        && lemma.is_none_or(|lemma| lemma.matches(link))
+}
+
+fn lemma_link(link: Link) -> Link {
+    Link {
+        color_a: LEMMA_COLOR,
+        color_b: LEMMA_COLOR,
+        ..link
+    }
+}
+
+fn update_lemma_url(window: &web_sys::Window, key: Option<&str>) {
+    let url = match key {
+        Some(key) => i18n::url_with(window, &[("lemma", key)], &[]),
+        None => i18n::url_with(window, &[], &["lemma"]),
+    };
+    if let Ok(history) = window.history() {
+        let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&url));
+    }
+}
+
+fn update_lemma_banner(shared: &Rc<RefCell<Shared>>) {
+    let Some(banner) = element("lemma-banner") else {
+        return;
+    };
+    let (lemma, loading, error) = {
+        let state = shared.borrow();
+        (
+            state.lemma.clone(),
+            state.lemma_loading,
+            state.lemma_error.clone(),
+        )
+    };
+    let lang = i18n::lang();
+    if let Some(lemma) = lemma {
+        banner.set_inner_html(&format!(
+            "<span class=\"lemma-kicker\">{}</span><strong class=\"lemma-key\">{}</strong><span class=\"lemma-gloss\">{}</span><span class=\"lemma-count\">{} {}</span><button class=\"lemma-clear\" type=\"button\" data-lemma-clear aria-label=\"{}\">×</button>",
+            i18n::tr(lang, "LEMA", "LEMMA"),
+            escape(&lemma.key),
+            escape(&lemma.gloss),
+            lemma.verse_count,
+            i18n::tr(lang, "versículos", "verses"),
+            i18n::tr(lang, "Quitar el filtro de lema", "Clear lemma filter")
+        ));
+        let _ = banner.remove_attribute("hidden");
+    } else if loading {
+        banner.set_inner_html(&format!(
+            "<span class=\"lemma-kicker\">{}</span><span class=\"lemma-loading\">{}</span>",
+            i18n::tr(lang, "LEMA", "LEMMA"),
+            i18n::tr(lang, "Cargando lema…", "Loading lemma…")
+        ));
+        let _ = banner.remove_attribute("hidden");
+    } else if let Some(error) = error {
+        banner.set_inner_html(&format!(
+            "<span class=\"lemma-kicker\">{}</span><span class=\"lemma-error\">{}</span><button class=\"lemma-clear\" type=\"button\" data-lemma-clear aria-label=\"{}\">×</button>",
+            i18n::tr(lang, "LEMA", "LEMMA"),
+            escape(&error),
+            i18n::tr(lang, "Cerrar", "Close")
+        ));
+        let _ = banner.remove_attribute("hidden");
+    } else {
+        let _ = banner.set_attribute("hidden", "");
     }
 }
 
@@ -997,6 +1135,18 @@ pub async fn run() -> Result<(), JsValue> {
     let now = performance_now();
     let initial_votes = votes_from_url(&window);
     let initial_filters = filters_from_url(&window);
+    let initial_lemma_key = lemma_key_from_url(&window);
+    let (initial_original, initial_lemma, initial_lemma_error) =
+        match initial_lemma_key.as_deref() {
+            Some(key) => match crate::original::load().await {
+                Ok(words) => match build_lemma_filter(&words, key) {
+                    Ok(filter) => (Some(words), Some(filter), None),
+                    Err(error) => (Some(words), None, Some(error)),
+                },
+                Err(error) => (None, None, Some(error)),
+            },
+            None => (None, None, None),
+        };
     let shared = Rc::new(RefCell::new(Shared {
         width: css_width,
         height: css_height,
@@ -1019,24 +1169,52 @@ pub async fn run() -> Result<(), JsValue> {
         votes: initial_votes,
         filters: initial_filters,
         last_input: now,
-        original: None,
+        show_original: initial_original.is_some(),
+        original: initial_original,
         original_loading: false,
         original_error: None,
-        show_original: false,
+        lemma: initial_lemma.clone(),
+        lemma_request: None,
+        lemma_loading: false,
+        lemma_error: initial_lemma_error.clone(),
     }));
 
     let initial_active: Vec<Link> = links_all
         .iter()
         .filter(|link| {
-            link.votes >= initial_votes
-                && initial_filters.matches_source(link.source, &versification)
+            link_visible(
+                link,
+                initial_votes,
+                initial_filters,
+                initial_lemma.as_ref(),
+                &versification,
+            )
         })
-        .copied()
+        .map(|link| {
+            if initial_lemma.is_some() {
+                lemma_link(*link)
+            } else {
+                *link
+            }
+        })
         .collect();
     let stats = compute_stats(&initial_active, initial_votes, total_links, &versification);
     update_stats(&stats);
     attach_input(&canvas, &window, shared.clone(), versification.clone());
     attach_chrome(&shared);
+    update_lemma_banner(&shared);
+    if let Some(lemma) = shared.borrow().lemma.as_ref() {
+        let key = lemma.key.clone();
+        update_lemma_url(&window, Some(&key));
+    }
+    if let Some(error) = initial_lemma_error {
+        update_lemma_url(&window, None);
+        set_status_error(&format!(
+            "{}: {}",
+            i18n::tr(lang, "Lema", "Lemma"),
+            error
+        ));
+    }
 
     // URL contract: ?ref=Juan.3.16 focuses a passage on load.
     let mut invalid_reference = false;
@@ -1077,6 +1255,7 @@ pub async fn run() -> Result<(), JsValue> {
     let mut ordered: Vec<Instance> = Vec::with_capacity(links_all.len());
     let mut active_votes = i16::MIN;
     let mut active_filters = FilterState::default();
+    let mut active_lemma = initial_lemma_key.clone();
     let mut active: Vec<Link> = Vec::with_capacity(links_all.len());
     let mut force_rebuild = true;
     let mut accumulate_dirty = true;
@@ -1195,7 +1374,7 @@ pub async fn run() -> Result<(), JsValue> {
                             );
                         }
                         wasm_bindgen_futures::spawn_local(async move {
-                            let result = load_original().await;
+                            let result = crate::original::load().await;
                             send(Command::OriginalLoaded(result));
                         });
                     }
@@ -1206,7 +1385,7 @@ pub async fn run() -> Result<(), JsValue> {
                         state.original_loading = false;
                         match result {
                             Ok(words) => {
-                                state.original = Some(Rc::new(words));
+                                state.original = Some(words);
                                 state.original_error = None;
                                 state.show_original = true;
                             }
@@ -1220,22 +1399,164 @@ pub async fn run() -> Result<(), JsValue> {
                         open_panel(&shared, &links_all, &versification, &text, votes);
                     }
                 }
+                Command::Lemma(key) => match key {
+                    None => {
+                        {
+                            let mut state = shared.borrow_mut();
+                            state.lemma = None;
+                            state.lemma_request = None;
+                            state.lemma_loading = false;
+                            state.lemma_error = None;
+                            state.view = (0.0, TOTAL_VERSES as f32);
+                            state.mark_scene(performance_now());
+                        }
+                        update_lemma_url(&window, None);
+                        update_lemma_banner(&shared);
+                        force_rebuild = true;
+                        let votes = shared.borrow().votes;
+                        if shared.borrow().focus.is_some() {
+                            open_panel(&shared, &links_all, &versification, &text, votes);
+                        }
+                    }
+                    Some(key) => {
+                        let key = key.trim().to_ascii_uppercase();
+                        let words = shared.borrow().original.clone();
+                        if let Some(words) = words {
+                            match build_lemma_filter(&words, &key) {
+                                Ok(filter) => {
+                                    let canonical = filter.key.clone();
+                                    {
+                                        let mut state = shared.borrow_mut();
+                                        state.lemma = Some(filter);
+                                        state.lemma_request = None;
+                                        state.lemma_loading = false;
+                                        state.lemma_error = None;
+                                        state.show_original = true;
+                                        state.view = (0.0, TOTAL_VERSES as f32);
+                                        state.mark_scene(performance_now());
+                                    }
+                                    update_lemma_url(&window, Some(&canonical));
+                                    update_lemma_banner(&shared);
+                                    force_rebuild = true;
+                                    let votes = shared.borrow().votes;
+                                    if shared.borrow().focus.is_some() {
+                                        open_panel(
+                                            &shared,
+                                            &links_all,
+                                            &versification,
+                                            &text,
+                                            votes,
+                                        );
+                                    }
+                                }
+                                Err(error) => {
+                                    {
+                                        let mut state = shared.borrow_mut();
+                                        state.lemma = None;
+                                        state.lemma_request = None;
+                                        state.lemma_loading = false;
+                                        state.lemma_error = Some(error);
+                                    }
+                                    update_lemma_url(&window, None);
+                                    update_lemma_banner(&shared);
+                                    force_rebuild = true;
+                                }
+                            }
+                        } else {
+                            {
+                                let mut state = shared.borrow_mut();
+                                state.lemma_request = Some(key.clone());
+                                state.lemma_loading = true;
+                                state.lemma_error = None;
+                            }
+                            update_lemma_banner(&shared);
+                            wasm_bindgen_futures::spawn_local(async move {
+                                let result = match crate::original::load().await {
+                                    Ok(words) => build_lemma_filter(&words, &key)
+                                        .map(|filter| (words, filter)),
+                                    Err(error) => Err(error),
+                                };
+                                send(Command::LemmaLoaded(result));
+                            });
+                        }
+                    }
+                },
+                Command::LemmaLoaded(result) => {
+                    let request = shared.borrow().lemma_request.clone();
+                    let mut applied = None;
+                    match result {
+                        Ok((words, filter)) => {
+                            let apply = request.as_deref() == Some(filter.key.as_str());
+                            {
+                                let mut state = shared.borrow_mut();
+                                state.original = Some(words);
+                                state.lemma_loading = false;
+                                if apply {
+                                    state.lemma = Some(filter);
+                                    state.lemma_request = None;
+                                    state.lemma_error = None;
+                                    state.show_original = true;
+                                    state.view = (0.0, TOTAL_VERSES as f32);
+                                    state.mark_scene(performance_now());
+                                    applied = state.lemma.as_ref().map(|lemma| lemma.key.clone());
+                                }
+                            }
+                            if applied.is_some() {
+                                force_rebuild = true;
+                            }
+                        }
+                        Err(error) => {
+                            let mut state = shared.borrow_mut();
+                            state.lemma_loading = false;
+                            if request.is_some() {
+                                state.lemma_request = None;
+                                state.lemma_error = Some(error);
+                            }
+                        }
+                    }
+                    update_lemma_banner(&shared);
+                    if let Some(key) = applied {
+                        update_lemma_url(&window, Some(&key));
+                    } else if shared.borrow().lemma.is_none() && shared.borrow().lemma_error.is_some()
+                    {
+                        update_lemma_url(&window, None);
+                    }
+                    let votes = shared.borrow().votes;
+                    if shared.borrow().focus.is_some() {
+                        open_panel(&shared, &links_all, &versification, &text, votes);
+                    }
+                }
             }
         }
 
         let votes = shared.borrow().votes;
         let filters = shared.borrow().filters;
-        if votes != active_votes || filters != active_filters {
+        let lemma = shared.borrow().lemma.clone();
+        let lemma_key = lemma.as_ref().map(|lemma| lemma.key.clone());
+        if votes != active_votes || filters != active_filters || lemma_key != active_lemma {
             active_votes = votes;
             active_filters = filters;
+            active_lemma = lemma_key;
             active.clear();
             active.extend(
                 links_all
                     .iter()
                     .filter(|link| {
-                        link.votes >= votes && filters.matches_source(link.source, &versification)
+                        link_visible(
+                            link,
+                            votes,
+                            filters,
+                            lemma.as_ref(),
+                            &versification,
+                        )
                     })
-                    .copied(),
+                    .map(|link| {
+                        if lemma.is_some() {
+                            lemma_link(*link)
+                        } else {
+                            *link
+                        }
+                    }),
             );
             let stats = compute_stats(&active, votes, total_links, &versification);
             update_stats(&stats);
@@ -1562,7 +1883,7 @@ fn open_panel(
     text: &TranslationText,
     votes: i16,
 ) {
-    let (focus, filters, original, show_original, loading, error) = {
+    let (focus, filters, original, show_original, loading, error, lemma) = {
         let state = shared.borrow();
         (
             state.focus,
@@ -1571,6 +1892,7 @@ fn open_panel(
             state.show_original,
             state.original_loading,
             state.original_error.clone(),
+            state.lemma.clone(),
         )
     };
     let Some((start, end)) = focus else {
@@ -1591,6 +1913,7 @@ fn open_panel(
         show_original,
         loading,
         error.as_deref(),
+        lemma.as_ref(),
     );
     if let Some(panel) = element("panel") {
         panel.set_inner_html(&html);
@@ -1611,6 +1934,7 @@ fn panel_html(
     show_original: bool,
     original_loading: bool,
     original_error: Option<&str>,
+    lemma: Option<&LemmaFilter>,
 ) -> String {
     let lang = i18n::lang();
     let (Some(first), Some(last)) = (versification.ref_at(start), versification.ref_at(end)) else {
@@ -1658,8 +1982,7 @@ fn panel_html(
     let mut outgoing: Vec<&Link> = links
         .iter()
         .filter(|link| {
-            link.votes >= votes
-                && filters.matches_source(link.source, versification)
+            link_visible(link, votes, filters, lemma, versification)
                 && link.source >= start
                 && link.source <= end
         })
@@ -1671,8 +1994,7 @@ fn panel_html(
     let mut incoming: Vec<&Link> = links
         .iter()
         .filter(|link| {
-            link.votes >= votes
-                && filters.matches_source(link.source, versification)
+            link_visible(link, votes, filters, lemma, versification)
                 && link.start <= end
                 && link.end >= start
         })
@@ -1744,10 +2066,10 @@ fn original_section(
     let language = original
         .and_then(|words| words.verse_language(start))
         .unwrap_or(if book < 39 { 0 } else { 2 });
-    let (language_name, language_attr) = match language {
-        1 => (i18n::tr(lang, "arameo", "Aramaic"), "arc"),
-        2 => (i18n::tr(lang, "griego", "Greek"), "grc"),
-        _ => (i18n::tr(lang, "hebreo", "Hebrew"), "he"),
+    let language_name = match language {
+        1 => i18n::tr(lang, "arameo", "Aramaic"),
+        2 => i18n::tr(lang, "griego", "Greek"),
+        _ => i18n::tr(lang, "hebreo", "Hebrew"),
     };
     html.push_str(&format!(
         "<div class=\"original-head\"><h3>{} · <span>{}</span></h3>",
@@ -1764,8 +2086,8 @@ fn original_section(
             "<p class=\"panel-note\">{}</p>",
             i18n::tr(
                 lang,
-                "Hebreo, arameo o griego con léxico y morfología. Se descarga una vez (5,4 MB).",
-                "Hebrew, Aramaic or Greek with lexicon and morphology. Downloaded once (5.4 MB)."
+                "Hebreo, arameo o griego con léxico y morfología. Se descarga una vez (5,6 MB).",
+                "Hebrew, Aramaic or Greek with lexicon and morphology. Downloaded once (5.6 MB)."
             )
         ));
     } else if loading {
@@ -1811,35 +2133,11 @@ fn original_section(
                     )
                 ));
             } else {
-                html.push_str(&format!(
-                    "<div class=\"original-words\" dir=\"{}\" lang=\"{}\">",
-                    if language == 2 { "ltr" } else { "rtl" },
-                    language_attr
+                html.push_str(&crate::original::words_html(
+                    words,
+                    verse,
+                    "original-words",
                 ));
-                for word in verse_words {
-                    let Some(surface) = words.surface(word) else {
-                        continue;
-                    };
-                    let translit = words
-                        .lex(word.strong_id)
-                        .map(|entry| entry.translit)
-                        .unwrap_or("");
-                    let morph = words.morph(word).unwrap_or("");
-                    let title = if translit.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" title=\"{}\"", escape(translit))
-                    };
-                    html.push_str(&format!(
-                        "<button class=\"word\" type=\"button\" data-strong=\"{}\" data-surface=\"{}\" data-morph=\"{}\"{}>{}</button>",
-                        word.strong_id,
-                        escape(surface),
-                        escape(morph),
-                        title,
-                        escape(surface)
-                    ));
-                }
-                html.push_str("</div>");
             }
             html.push_str("</div>");
         }
@@ -1875,99 +2173,20 @@ fn original_section(
 }
 
 fn show_lexicon(shared: &Rc<RefCell<Shared>>, strong_id: u32, surface: &str, morph: &str) {
-    let Some(original) = shared.borrow().original.clone() else {
-        return;
-    };
-    let Some(entry) = original.lex(strong_id) else {
+    let Some(words) = shared.borrow().original.clone() else {
         return;
     };
     let lang = i18n::lang();
-    let count = original.occurrence_count(strong_id);
-    let hebrew = entry.key.starts_with('H');
-    let dir = if hebrew { "rtl" } else { "ltr" };
-    let lang_attr = if hebrew { "he" } else { "grc" };
-    let description = morph_description(morph, hebrew);
-
-    let mut html = String::from("<div class=\"lex-head\">");
-    html.push_str(&format!(
-        "<span class=\"lex-key\">{}</span><strong class=\"lex-lemma\" dir=\"{}\" lang=\"{}\">{}</strong>",
-        escape(entry.key),
-        dir,
-        lang_attr,
-        escape(entry.lemma)
-    ));
-    if !entry.translit.is_empty() {
-        html.push_str(&format!(
-            "<span class=\"lex-translit\">{}</span>",
-            escape(entry.translit)
-        ));
-    }
-    html.push_str("</div>");
-
-    if !surface.is_empty() {
-        html.push_str(&format!(
-            "<p class=\"lex-form\"><span class=\"lex-label\">{}</span> <strong dir=\"{}\" lang=\"{}\">{}</strong>",
-            i18n::tr(lang, "Forma", "Form"),
-            dir,
-            lang_attr,
-            escape(surface)
-        ));
-        if !morph.is_empty() {
-            html.push_str(&format!(" <code>{}</code>", escape(morph)));
-        }
-        if !description.is_empty() {
-            html.push_str(&format!(" · {}", escape(&description)));
-        }
-        html.push_str("</p>");
-    }
-
-    html.push_str(&format!(
-        "<p class=\"lex-gloss\"><span class=\"lex-label\">{}</span> {}</p>",
-        i18n::tr(lang, "Glosa", "Gloss"),
-        if entry.gloss.is_empty() {
-            "—".to_string()
-        } else {
-            escape(entry.gloss)
-        }
-    ));
-    let category = lex_category(entry.morph, lang);
-    if !category.is_empty() && description.is_empty() {
-        html.push_str(&format!(
-            "<p class=\"lex-morph\"><span class=\"lex-label\">{}</span> {}</p>",
-            i18n::tr(lang, "Categoría", "Category"),
-            category
-        ));
-    }
-    if !entry.meaning.is_empty() {
-        html.push_str(&format!(
-            "<p class=\"lex-meaning\">{}</p>",
-            escape(entry.meaning)
-        ));
-    } else {
-        html.push_str(&format!(
-            "<p class=\"panel-note\">{}</p>",
-            i18n::tr(
-                lang,
-                "Sin definición en el léxico.",
-                "No lexicon definition."
-            )
-        ));
-    }
-    html.push_str(&format!(
-        "<button class=\"lex-occurrences\" type=\"button\" data-occurrences=\"{}\">{}</button>",
+    let html = crate::original::card_html(
+        &words,
         strong_id,
-        format!(
-            "{} ({})",
-            i18n::tr(lang, "Ver ocurrencias", "Show occurrences"),
-            count
-        )
-    ));
-    html.push_str("<div id=\"lex-occurrences\"></div>");
-
-    if let Some(card) = element("lex-card") {
-        card.set_inner_html(&html);
-        let _ = card.remove_attribute("hidden");
-    }
+        surface,
+        morph,
+        lang,
+        "lex-occurrences",
+        None,
+    );
+    crate::original::fill("lex-card", &html, true);
     if let Some(panel) = element("panel") {
         if let Ok(nodes) = panel.query_selector_all(".word") {
             for index in 0..nodes.length() {
@@ -1991,274 +2210,11 @@ fn show_lexicon(shared: &Rc<RefCell<Shared>>, strong_id: u32, surface: &str, mor
 }
 
 fn show_occurrences(shared: &Rc<RefCell<Shared>>, strong_id: u32) {
-    let Some(original) = shared.borrow().original.clone() else {
+    let Some(words) = shared.borrow().original.clone() else {
         return;
     };
-    let lang = i18n::lang();
-    let versification = Versification::kjv();
-    let all = original.occurrences(strong_id);
-    let total = all.len();
-    let mut html = String::new();
-    if total == 0 {
-        html.push_str(&format!(
-            "<p class=\"panel-note\">{}</p>",
-            i18n::tr(lang, "Sin ocurrencias.", "No occurrences.")
-        ));
-    } else {
-        html.push_str(&format!(
-            "<p class=\"lex-occurrences-title\">{} {}</p>",
-            total,
-            i18n::tr(lang, "ocurrencias", "occurrences")
-        ));
-        html.push_str("<div class=\"lex-occurrences-list\">");
-        for verse in all.iter().take(80) {
-            let reference = i18n::format_verse(lang, &versification, *verse);
-            html.push_str(&format!(
-                "<button class=\"occurrence\" type=\"button\" data-occurrence=\"{}\">{}</button>",
-                verse,
-                escape(&reference)
-            ));
-        }
-        html.push_str("</div>");
-        if total > 80 {
-            html.push_str(&format!(
-                "<p class=\"panel-note\">{} 80 {} {}</p>",
-                i18n::tr(lang, "Mostrando", "Showing"),
-                i18n::tr(lang, "de", "of"),
-                total
-            ));
-        }
-    }
-    if let Some(node) = element("lex-occurrences") {
-        node.set_inner_html(&html);
-    }
-}
-
-fn morph_description(code: &str, hebrew: bool) -> String {
-    if code.is_empty() {
-        return String::new();
-    }
-    let lang = i18n::lang();
-    if hebrew {
-        let mut chars = code.chars();
-        let _ = chars.next();
-        return match chars.next() {
-            Some('V') => i18n::tr(lang, "verbo", "verb"),
-            Some('N') => match chars.next() {
-                Some('p') => i18n::tr(lang, "nombre propio", "proper noun"),
-                Some('c') => i18n::tr(lang, "nombre común", "common noun"),
-                _ => i18n::tr(lang, "nombre", "noun"),
-            },
-            Some('A') => i18n::tr(lang, "adjetivo", "adjective"),
-            Some('R') => i18n::tr(lang, "preposición", "preposition"),
-            Some('T') => i18n::tr(lang, "partícula", "particle"),
-            Some('C') => i18n::tr(lang, "conjunción", "conjunction"),
-            Some('D') => i18n::tr(lang, "adverbio", "adverb"),
-            Some('P') => i18n::tr(lang, "pronombre", "pronoun"),
-            Some('S') => i18n::tr(lang, "sufijo", "suffix"),
-            _ => "",
-        }
-        .to_string();
-    }
-
-    let (part_of_speech, rest) = code.split_once('-').unwrap_or((code, ""));
-    let noun = match part_of_speech {
-        "N" => i18n::tr(lang, "nombre", "noun"),
-        "V" => i18n::tr(lang, "verbo", "verb"),
-        "A" => i18n::tr(lang, "adjetivo", "adjective"),
-        "T" => i18n::tr(lang, "artículo", "article"),
-        "P" => i18n::tr(lang, "pronombre", "pronoun"),
-        "D" => i18n::tr(lang, "demostrativo", "demonstrative"),
-        "R" => i18n::tr(lang, "relativo", "relative"),
-        "PREP" => i18n::tr(lang, "preposición", "preposition"),
-        "CONJ" => i18n::tr(lang, "conjunción", "conjunction"),
-        "ADV" => i18n::tr(lang, "adverbio", "adverb"),
-        "X" | "PRT" => i18n::tr(lang, "partícula", "particle"),
-        "I" | "INJ" => i18n::tr(lang, "interjección", "interjection"),
-        _ => "",
-    };
-    if noun.is_empty() {
-        return String::new();
-    }
-    if part_of_speech != "V" {
-        if rest.is_empty() {
-            return noun.to_string();
-        }
-        let mut tail = rest;
-        let mut person = None;
-        if tail.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
-            person = tail.chars().next();
-            tail = &tail[1..];
-        }
-        let mut out = String::from(noun);
-        if let Some(person) = person {
-            out.push(' ');
-            out.push_str(greek_person(person, lang));
-            out.push_str(i18n::tr(lang, " persona", " person"));
-        }
-        let chars: Vec<char> = tail.chars().collect();
-        if person.is_some() && chars.len() >= 2 {
-            out.push(' ');
-            out.push_str(greek_case(chars[0], lang));
-            out.push(' ');
-            out.push_str(greek_number(chars[1], lang));
-        } else if chars.len() >= 3 {
-            out.push(' ');
-            out.push_str(greek_case(chars[0], lang));
-            out.push(' ');
-            out.push_str(greek_number(chars[1], lang));
-            out.push(' ');
-            out.push_str(greek_gender(chars[2], lang));
-        }
-        return out.trim().to_string();
-    }
-
-    let mut rest = rest;
-    let mut second = false;
-    if let Some(stripped) = rest.strip_prefix('2') {
-        rest = stripped;
-        second = true;
-    }
-    let chars: Vec<char> = rest.chars().collect();
-    if chars.len() < 3 {
-        return noun.to_string();
-    }
-    let tense = greek_tense(chars[0], lang);
-    let voice = greek_voice(chars[1], lang);
-    let mood = greek_mood(chars[2], lang);
-    let tail = rest[3..].strip_prefix('-').unwrap_or(&rest[3..]);
-    let mut out = String::from(noun);
-    if second {
-        out.push_str(i18n::tr(lang, " segundo", " second"));
-    }
-    out.push(' ');
-    out.push_str(tense);
-    out.push(' ');
-    out.push_str(voice);
-    out.push(' ');
-    out.push_str(mood);
-    let tail_chars: Vec<char> = tail.chars().collect();
-    if chars[2] == 'P' && tail_chars.len() >= 3 {
-        out.push(' ');
-        out.push_str(greek_case(tail_chars[0], lang));
-        out.push(' ');
-        out.push_str(greek_number(tail_chars[1], lang));
-        out.push(' ');
-        out.push_str(greek_gender(tail_chars[2], lang));
-    } else if tail_chars.len() >= 2 && tail_chars[0].is_ascii_digit() {
-        out.push(' ');
-        out.push_str(greek_person(tail_chars[0], lang));
-        out.push(' ');
-        out.push_str(greek_number(tail_chars[1], lang));
-    }
-    out.trim().to_string()
-}
-
-fn lex_category(code: &str, lang: Lang) -> &'static str {
-    let part = code.split_once(':').map(|(_, rest)| rest).unwrap_or(code);
-    match part.chars().next() {
-        Some('N') => i18n::tr(lang, "nombre", "noun"),
-        Some('V') => i18n::tr(lang, "verbo", "verb"),
-        Some('A') => i18n::tr(lang, "adjetivo", "adjective"),
-        Some('R') => i18n::tr(lang, "preposición", "preposition"),
-        Some('T') => i18n::tr(lang, "partícula", "particle"),
-        Some('C') => i18n::tr(lang, "conjunción", "conjunction"),
-        Some('D') => i18n::tr(lang, "adverbio", "adverb"),
-        Some('P') => i18n::tr(lang, "pronombre", "pronoun"),
-        Some('S') => i18n::tr(lang, "sufijo", "suffix"),
-        _ => "",
-    }
-}
-
-fn greek_case(code: char, lang: Lang) -> &'static str {
-    match code {
-        'N' => i18n::tr(lang, "nominativo", "nominative"),
-        'G' => i18n::tr(lang, "genitivo", "genitive"),
-        'D' => i18n::tr(lang, "dativo", "dative"),
-        'A' => i18n::tr(lang, "acusativo", "accusative"),
-        'V' => i18n::tr(lang, "vocativo", "vocative"),
-        _ => "",
-    }
-}
-
-fn greek_number(code: char, _lang: Lang) -> &'static str {
-    match code {
-        'S' => "singular",
-        'P' => "plural",
-        _ => "",
-    }
-}
-
-fn greek_gender(code: char, lang: Lang) -> &'static str {
-    match code {
-        'M' => i18n::tr(lang, "masculino", "masculine"),
-        'F' => i18n::tr(lang, "femenino", "feminine"),
-        'N' => i18n::tr(lang, "neutro", "neuter"),
-        _ => "",
-    }
-}
-
-fn greek_person(code: char, lang: Lang) -> &'static str {
-    match code {
-        '1' => i18n::tr(lang, "1.ª", "1st"),
-        '2' => i18n::tr(lang, "2.ª", "2nd"),
-        '3' => i18n::tr(lang, "3.ª", "3rd"),
-        _ => "",
-    }
-}
-
-fn greek_tense(code: char, lang: Lang) -> &'static str {
-    match code {
-        'P' => i18n::tr(lang, "presente", "present"),
-        'I' => i18n::tr(lang, "imperfecto", "imperfect"),
-        'F' => i18n::tr(lang, "futuro", "future"),
-        'A' => i18n::tr(lang, "aoristo", "aorist"),
-        'X' => i18n::tr(lang, "perfecto", "perfect"),
-        'Y' => i18n::tr(lang, "pluscuamperfecto", "pluperfect"),
-        _ => "",
-    }
-}
-
-fn greek_voice(code: char, lang: Lang) -> &'static str {
-    match code {
-        'A' => i18n::tr(lang, "activo", "active"),
-        'M' => i18n::tr(lang, "medio", "middle"),
-        'P' => i18n::tr(lang, "pasivo", "passive"),
-        'E' | 'N' => i18n::tr(lang, "medio/pasivo", "middle/passive"),
-        'D' => i18n::tr(lang, "deponente", "deponent"),
-        _ => "",
-    }
-}
-
-fn greek_mood(code: char, lang: Lang) -> &'static str {
-    match code {
-        'I' => i18n::tr(lang, "indicativo", "indicative"),
-        'S' => i18n::tr(lang, "subjuntivo", "subjunctive"),
-        'O' => i18n::tr(lang, "optativo", "optative"),
-        'M' => i18n::tr(lang, "imperativo", "imperative"),
-        'N' => i18n::tr(lang, "infinitivo", "infinitive"),
-        'P' => i18n::tr(lang, "participio", "participle"),
-        _ => "",
-    }
-}
-
-async fn load_original() -> Result<WordsData, String> {
-    let bytes = fetch_bytes("data/words.bin.gz")
-        .await
-        .map_err(|error| format!("{error:?}"))?;
-    // Servers normally hand over the gzip bytes, but a proxy or a future
-    // uncompressed file may already be decoded.
-    let raw = if bytes.starts_with(&[0x1f, 0x8b]) {
-        let mut decoder = flate2::read::GzDecoder::new(bytes.as_slice());
-        let mut raw = Vec::new();
-        decoder
-            .read_to_end(&mut raw)
-            .map_err(|error| format!("words.bin.gz: {error}"))?;
-        raw
-    } else {
-        bytes
-    };
-    WordsData::parse(&raw)
+    let html = crate::original::occurrences_html(&words, strong_id, i18n::lang());
+    crate::original::fill("lex-occurrences", &html, true);
 }
 
 fn section(
@@ -2859,6 +2815,12 @@ fn attach_chrome(shared: &Rc<RefCell<Shared>>) {
                 }
                 return;
             }
+            if let Ok(Some(button)) = target.closest("[data-lemma]") {
+                if let Some(key) = button.get_attribute("data-lemma") {
+                    send(Command::Lemma(Some(key)));
+                }
+                return;
+            }
             if let Ok(Some(button)) = target.closest("[data-occurrences]") {
                 if let Some(id) = button
                     .get_attribute("data-occurrences")
@@ -2878,6 +2840,23 @@ fn attach_chrome(shared: &Rc<RefCell<Shared>>) {
             }
         });
         let _ = panel.add_event_listener_with_callback("click", handler.as_ref().unchecked_ref());
+        handler.forget();
+    }
+
+    if let Some(banner) = document.get_element_by_id("lemma-banner") {
+        let handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+            let Some(target) = event
+                .target()
+                .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+            else {
+                return;
+            };
+            if let Ok(Some(_)) = target.closest("[data-lemma-clear]") {
+                send(Command::Lemma(None));
+            }
+        });
+        let _ =
+            banner.add_event_listener_with_callback("click", handler.as_ref().unchecked_ref());
         handler.forget();
     }
 }
@@ -3152,7 +3131,7 @@ fn truncate(text: &str, limit: usize) -> String {
     out
 }
 
-async fn fetch_bytes(url: &str) -> Result<Vec<u8>, JsValue> {
+pub(crate) async fn fetch_bytes(url: &str) -> Result<Vec<u8>, JsValue> {
     let window = web_sys::window().ok_or_else(|| JsValue::from_str("no window"))?;
     let response = JsFuture::from(window.fetch_with_str(url))
         .await

@@ -17,6 +17,10 @@ third parties and keep their own licenses, which require attribution:
 
 ## Original languages and lexicon
 
+- **Reina-Valera 1909 (USFX)** — public domain. Source: eBible.org,
+  <https://ebible.org/spaRV1909/>. Its Strong-tagged words are aligned to the
+  TAHOT/TAGNT word order to produce the Spanish glosses and usage senses shown
+  in the lexicon card.
 - **STEPBible Data** (TAHOT, TAGNT, TBESH, TBESG), created by Tyndale House
   Cambridge and curated by STEPBible.org — CC BY 4.0.
   <https://github.com/STEPBible/STEPBible-Data>
@@ -27,6 +31,7 @@ third parties and keep their own licenses, which require attribution:
   - TBESH and TBESG are brief lexicons based on abridged BDB and Abbott-Smith.
 
 The KJV versification (chapter/verse counts) is used only as a canonical
-coordinate system; its text is not bundled. STEPBible's lexical definitions are
-shown in their original English; the interface and the morphology descriptions
-are localized.
+coordinate system; its text is not bundled. The Spanish glosses and usage
+senses come from the RV1909 alignment; STEPBible's full lexical articles are
+shown in their original English, while the interface and morphology
+descriptions are localized.

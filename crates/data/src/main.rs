@@ -213,15 +213,41 @@ fn verify(dir: &Path) -> Result<(), String> {
             "words: expected many G0025 occurrences, found {g25_count}"
         ));
     }
+    let g25_entry = words
+        .lex(g25)
+        .ok_or_else(|| "words: G0025 has no lexicon entry".to_string())?;
+    if g25_entry.es_gloss.is_empty() || g25_entry.es_senses.is_empty() {
+        return Err("words: G0025 has no Spanish gloss".into());
+    }
+    let h3068_entry = words
+        .lex(h3068)
+        .ok_or_else(|| "words: H3068G has no lexicon entry".to_string())?;
+    if h3068_entry.es_gloss.is_empty() {
+        return Err("words: H3068G has no Spanish gloss".into());
+    }
+    let h7225 = words
+        .lex_id_fuzzy("h7225")
+        .ok_or_else(|| "words: H7225 is missing".to_string())?;
+    if words.lex(h7225).map(|entry| entry.es_gloss) != Some("principio") {
+        return Err("words: H7225G should be glossed «principio»".into());
+    }
+    let spanish_entries = (0..words.lex_count())
+        .filter(|id| {
+            words
+                .lex(*id as u32)
+                .is_some_and(|entry| !entry.es_gloss.is_empty())
+        })
+        .count();
 
     println!(
-        "ok: {} verses, {} links ({} published), {} bytes of text, {} words / {} lemmas (G0025 in {} verses)",
+        "ok: {} verses, {} links ({} published), {} bytes of text, {} words / {} lemmas, {} Spanish glosses (G0025 in {} verses)",
         xrefs.verse_count,
         xrefs.link_count(),
         published,
         text_bytes,
         words.word_count(),
         words.lex_count(),
+        spanish_entries,
         g25_count
     );
     Ok(())

@@ -6,7 +6,7 @@
     <title>Referencias cruzadas de la Biblia · Aletheia</title>
     <meta
       name="description"
-      content="Explora 344.799 referencias cruzadas en 31.102 versículos con la Biblia Platense (Straubinger) y la American Standard Version, y consulta el texto original hebreo/griego con léxico Strong. Diagrama de arcos interactivo en Rust + WebAssembly."
+      content="Explora 344.799 referencias cruzadas en 31.102 versículos con la Biblia Platense (Straubinger) y la American Standard Version, y consulta el texto original hebreo/griego con léxico Strong, glosas en español y filtro por lema. Diagrama de arcos interactivo en Rust + WebAssembly."
     />
     <meta name="theme-color" content="#0b0c0e" />
     <meta name="color-scheme" content="dark" />
@@ -17,7 +17,7 @@
     <meta property="og:title" content="Referencias cruzadas de la Biblia" />
     <meta
       property="og:description"
-      content="344.799 referencias cruzadas, 31.102 versículos, dos traducciones y el texto original hebreo/griego con léxico Strong. Un mapa interactivo de la Biblia en Rust + WebAssembly."
+      content="344.799 referencias cruzadas, 31.102 versículos, dos traducciones y el texto original hebreo/griego con léxico Strong, glosas en español y filtro por lema. Un mapa interactivo de la Biblia en Rust + WebAssembly."
     />
     <meta property="og:url" content="https://yojananyosef.github.io/Aletheia-xrefs-rs/" />
     <meta property="og:image" content="https://yojananyosef.github.io/Aletheia-xrefs-rs/og-image.png" />
@@ -41,13 +41,14 @@
         "@type": "WebApplication",
         "name": "Aletheia · Referencias cruzadas de la Biblia",
         "url": "https://yojananyosef.github.io/Aletheia-xrefs-rs/",
-        "description": "Visualizador interactivo de 344.799 referencias cruzadas bíblicas con la Biblia Platense, la ASV y el texto original hebreo/griego con léxico Strong.",
+        "description": "Visualizador interactivo de 344.799 referencias cruzadas bíblicas con la Biblia Platense, la ASV y el texto original hebreo/griego con léxico Strong, glosas en español y filtro por lema.",
         "applicationCategory": "ReferenceApplication",
         "featureList": [
           "Diagrama de arcos de referencias cruzadas",
           "Biblia Platense y American Standard Version",
-          "Texto original hebreo, arameo y griego",
-          "Léxico Strong y morfología",
+          "Texto original hebreo, arameo y griego en Arcos e Hilos",
+          "Léxico Strong, morfología y glosas en español",
+          "Filtro por lema y arcos compartidos",
           "Búsqueda por referencia y filtros"
         ],
         "operatingSystem": "Any",
@@ -389,6 +390,62 @@
         pointer-events: none;
       }
       .stats strong { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+      .lemma-banner {
+        position: absolute;
+        z-index: 4;
+        top: 14px;
+        left: 50%;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        max-width: min(560px, calc(100% - 380px));
+        padding: 6px 8px 6px 11px;
+        border: 1px solid rgba(228, 179, 99, 0.34);
+        border-radius: 999px;
+        background: rgba(22, 19, 13, 0.9);
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.32);
+        backdrop-filter: blur(12px);
+        color: var(--text-soft);
+        font-size: 11px;
+        transform: translateX(-50%);
+        pointer-events: auto;
+      }
+      .lemma-kicker {
+        color: var(--faint);
+        font-size: 8px;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+      }
+      .lemma-key { color: var(--accent); font-family: var(--font-mono); font-size: 10px; }
+      .lemma-gloss {
+        overflow: hidden;
+        color: var(--text);
+        font-family: var(--font-serif);
+        font-size: 13px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .lemma-count { flex: 0 0 auto; color: var(--faint); font-size: 9.5px; }
+      .lemma-clear {
+        display: grid;
+        flex: 0 0 auto;
+        place-items: center;
+        width: 20px;
+        height: 20px;
+        padding: 0;
+        border: 0;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1;
+        cursor: pointer;
+      }
+      .lemma-clear:hover { background: rgba(255, 255, 255, 0.11); color: var(--text); }
+      .lemma-loading { color: var(--accent); font-size: 10px; }
+      .lemma-error { color: var(--danger); font-size: 10px; }
+
       .hints {
         position: absolute;
         z-index: 3;
@@ -758,6 +815,53 @@
       }
       .occurrence:hover { border-color: var(--line-strong); background: rgba(255, 255, 255, 0.06); color: var(--text); }
       .original-source { margin: 12px 0 0; color: var(--faint); font-size: 8px; line-height: 1.5; }
+      .lex-lang {
+        margin-left: 2px;
+        color: var(--faint);
+        font-family: var(--font-ui);
+        font-size: 8px;
+        font-style: italic;
+      }
+      .lex-definition {
+        margin: 8px 0 0;
+        color: var(--text-soft);
+        font-family: var(--font-serif);
+        font-size: 13px;
+        line-height: 1.5;
+        overflow-wrap: anywhere;
+      }
+      .lex-definition .lex-label { margin-right: 3px; font-family: var(--font-ui); }
+      .lex-english { white-space: pre-line; }
+      .lex-source-note { margin: 5px 0 0; color: var(--faint); font-size: 8.5px; line-height: 1.45; }
+      .lex-details { margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--line); }
+      .lex-details summary {
+        color: var(--muted);
+        font-size: 9px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        cursor: pointer;
+        list-style: none;
+      }
+      .lex-details summary::-webkit-details-marker { display: none; }
+      .lex-details summary::before { content: "＋ "; color: var(--faint); }
+      .lex-details[open] summary::before { content: "− "; }
+      .lex-details[open] summary { margin-bottom: 7px; }
+      .lex-arcs {
+        display: inline-flex;
+        align-items: center;
+        height: 27px;
+        margin-top: 8px;
+        padding: 0 10px;
+        border: 1px solid rgba(228, 179, 99, 0.34);
+        border-radius: 6px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-size: 10px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .lex-arcs:hover { border-color: rgba(228, 179, 99, 0.56); background: rgba(228, 179, 99, 0.2); }
+      .lex-credit { margin: 10px 0 0; color: var(--faint); font-size: 8px; line-height: 1.45; }
 
       /* ---------- threads reader ---------- */
       .reader {
@@ -813,14 +917,52 @@
         cursor: pointer;
       }
       .chapter-nav button:hover { background: rgba(255, 255, 255, 0.07); color: var(--text); }
+      .threads-controls {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 7px;
+        margin-top: 11px;
+      }
       .threads-directions {
         display: inline-flex;
         gap: 2px;
-        margin-top: 11px;
         padding: 2px;
         border: 1px solid var(--line);
         border-radius: 999px;
         background: rgba(255, 255, 255, 0.022);
+      }
+      .threads-original {
+        height: 28px;
+        padding: 0 11px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.022);
+        color: var(--muted);
+        font-size: 10px;
+        cursor: pointer;
+      }
+      .threads-original:hover { background: rgba(255, 255, 255, 0.06); color: var(--text); }
+      .threads-original[aria-pressed="true"] {
+        border-color: rgba(228, 179, 99, 0.36);
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+      .threads-original-note {
+        margin: -8px 0 14px;
+        color: var(--faint);
+        font-size: 10px;
+        line-height: 1.5;
+      }
+      .threads-original-note button {
+        margin-left: 4px;
+        padding: 1px 7px;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        background: transparent;
+        color: var(--accent);
+        font-size: 9px;
+        cursor: pointer;
       }
       .threads-directions button {
         height: 24px;
@@ -840,7 +982,7 @@
       }
       .verse {
         display: flex;
-        align-items: baseline;
+        align-items: flex-start;
         justify-content: space-between;
         gap: 12px;
         margin: 0 -7px 5px;
@@ -854,7 +996,33 @@
         transition: background 120ms ease, color 120ms ease;
       }
       .verse:hover { background: rgba(255, 255, 255, 0.04); color: var(--text); }
+      .verse-body { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; }
       .verse-text { flex: 1 1 auto; }
+      .verse-original {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 0 1px;
+        margin-top: 2px;
+        color: var(--muted);
+        font-family: "Noto Serif Hebrew", "DejaVu Serif", "Times New Roman", serif;
+        font-size: 12.5px;
+        line-height: 1.9;
+      }
+      .verse-original[lang="grc"],
+      .verse-original[lang="arc"] {
+        font-family: "Noto Serif", "DejaVu Serif", "Times New Roman", serif;
+      }
+      .verse-original .word {
+        padding: 0 2px;
+        color: var(--muted);
+        font-size: inherit;
+        line-height: inherit;
+      }
+      .verse-original .word:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
+      .verse-original .word[data-selected="true"] { color: var(--accent); }
+      .verse-original-loading { margin-top: 2px; color: var(--faint); font-size: 9px; font-style: italic; }
+      .threads-lex-card { margin-top: 12px; }
       .verse-count {
         flex: 0 0 auto;
         padding: 1px 6px;
@@ -938,6 +1106,11 @@
         .legend { display: none; }
         .hints { display: none; }
         .stats { max-width: calc(100% - 28px); }
+        .lemma-banner {
+          left: 16px;
+          max-width: min(460px, calc(100% - 400px));
+          transform: none;
+        }
       }
       @media (max-width: 980px) {
         .topbar { gap: 8px; padding: 0 12px; }
@@ -979,6 +1152,13 @@
         .filters-toggle { width: 32px; padding: 0; }
         .filters-toggle .button-label { display: none; }
         .stats { display: none; }
+        .lemma-banner {
+          top: 8px;
+          right: 8px;
+          left: 8px;
+          max-width: none;
+          transform: none;
+        }
         .arcs-root, .threads-root { padding: 8px; gap: 8px; }
         .stage { min-height: 0; border-radius: 10px; }
         .panel { top: 8px; right: 8px; bottom: 8px; width: calc(100% - 16px); border-radius: 10px; }

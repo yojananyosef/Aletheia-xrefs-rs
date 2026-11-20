@@ -13,19 +13,24 @@
 //! blob          UTF-8 surfaces
 //! morph_offsets u32 * (morph_count + 1)
 //! morph_blob    UTF-8 morphology codes
-//! lex_records   48 bytes each: six (offset u32, length u32) string pairs
-//! lex_blob      UTF-8 key, lemma, transliteration, morph, gloss, meaning
+//! lex_records   64 bytes each: eight (offset u32, length u32) string pairs
+//! lex_blob      UTF-8 key, lemma, transliteration, morph, gloss, meaning,
+//!               Spanish gloss, Spanish senses
 //! ```
 //!
-//! `meta` stores the language in bits 0..1 (0 Hebrew, 1 Aramaic, 2 Greek) and
-//! a punctuation flag in bit 2. `morph_id == 0xFFFF` means no morphology.
+//! `meta` stores the language in bits 0..1 (0 Hebrew, 1 Aramaic, 2 Greek), a
+//! punctuation flag in bit 2 and the Byzantine/TR fallback flag in bit 3.
+//! `morph_id == 0xFFFF` means no morphology. Spanish glosses and senses are
+//! aligned from the public-domain Reina-Valera 1909; the STEPBible meaning
+//! stays in English because its source lexicon is English-only.
 
 use std::cmp::Ordering;
 
 pub const WORDS_MAGIC: [u8; 4] = *b"WRD1";
 pub const WORDS_HEADER_LEN: usize = 32;
 pub const WORD_RECORD_LEN: usize = 14;
-pub const LEX_RECORD_LEN: usize = 48;
+pub const LEX_RECORD_LEN: usize = 64;
+pub const WORDS_VERSION: u16 = 2;
 pub const MORPH_NONE: u16 = 0xFFFF;
 
 #[derive(Clone, Copy, Debug)]
@@ -55,7 +60,7 @@ impl Word {
 
 #[derive(Clone, Copy, Debug)]
 struct LexRecord {
-    fields: [(u32, u32); 6],
+    fields: [(u32, u32); 8],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -66,6 +71,10 @@ pub struct LexView<'a> {
     pub morph: &'a str,
     pub gloss: &'a str,
     pub meaning: &'a str,
+    /// Short Spanish gloss aligned from the Reina-Valera 1909.
+    pub es_gloss: &'a str,
+    /// Spanish usage senses, separated by ` · `.
+    pub es_senses: &'a str,
 }
 
 /// Verse-indexed words plus the brief lexicon, parsed zero-copy from an
@@ -91,8 +100,11 @@ impl WordsData {
             return Err("words: bad magic (expected WRD1)".into());
         }
         let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-        if version != 1 {
-            return Err(format!("words: unsupported version {version}"));
+        if version != WORDS_VERSION {
+            return Err(format!(
+                "words: unsupported version {version} (expected {WORDS_VERSION}); \
+                 regenerate words.bin.gz with data/import_stepbible.py"
+            ));
         }
         let verse_count = read_u32(bytes, 8)?;
         let word_count = read_u32(bytes, 12)? as usize;
@@ -263,6 +275,8 @@ impl WordsData {
             morph: self.lex_str(record.fields[3])?,
             gloss: self.lex_str(record.fields[4])?,
             meaning: self.lex_str(record.fields[5])?,
+            es_gloss: self.lex_str(record.fields[6])?,
+            es_senses: self.lex_str(record.fields[7])?,
         })
     }
 
@@ -280,6 +294,24 @@ impl WordsData {
             }
         }
         None
+    }
+
+    /// Like [`lex_id`](Self::lex_id), but accepts a base number when the
+    /// lexicon only has disambiguated siblings (`H2617` -> `H2617A`).
+    pub fn lex_id_fuzzy(&self, key: &str) -> Option<u32> {
+        let key = key.trim().to_ascii_uppercase();
+        if key.is_empty() || !(key.starts_with('G') || key.starts_with('H')) {
+            return None;
+        }
+        if let Some(id) = self.lex_id(&key) {
+            return Some(id);
+        }
+        (0..self.lex_records.len()).find_map(|id| {
+            let candidate = self.lex(id as u32)?.key;
+            let suffix = candidate.strip_prefix(&key)?;
+            (suffix.len() == 1 && suffix.chars().all(|ch| ch.is_ascii_alphabetic()))
+                .then_some(id as u32)
+        })
     }
 
     /// Every verse containing at least one word with this Strong id.
@@ -372,7 +404,7 @@ fn read_lex_records(bytes: &[u8], count: usize) -> Result<Vec<LexRecord>, String
     }
     let mut out = Vec::with_capacity(count);
     for chunk in bytes.chunks_exact(LEX_RECORD_LEN) {
-        let mut fields = [(0u32, 0u32); 6];
+        let mut fields = [(0u32, 0u32); 8];
         for (index, field) in fields.iter_mut().enumerate() {
             let at = index * 8;
             *field = (
@@ -404,7 +436,18 @@ mod tests {
         let morph_text = push_str(&mut lex_blob, "N-NSF");
         let gloss = push_str(&mut lex_blob, "alpha");
         let meaning = push_str(&mut lex_blob, "first");
-        let lex_fields = [key, lemma, translit, morph_text, gloss, meaning];
+        let es_gloss = push_str(&mut lex_blob, "alfa");
+        let es_senses = push_str(&mut lex_blob, "alfa");
+        let lex_fields = [
+            key,
+            lemma,
+            translit,
+            morph_text,
+            gloss,
+            meaning,
+            es_gloss,
+            es_senses,
+        ];
 
         let mut lex_record = Vec::new();
         for (offset, length) in lex_fields {
@@ -414,7 +457,7 @@ mod tests {
 
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&WORDS_MAGIC);
-        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&WORDS_VERSION.to_le_bytes());
         bytes.extend_from_slice(&0u16.to_le_bytes());
         bytes.extend_from_slice(&1u32.to_le_bytes()); // verses
         bytes.extend_from_slice(&1u32.to_le_bytes()); // words
@@ -447,7 +490,11 @@ mod tests {
         assert_eq!(entry.key, "G0001");
         assert_eq!(entry.lemma, "α");
         assert_eq!(entry.meaning, "first");
+        assert_eq!(entry.es_gloss, "alfa");
+        assert_eq!(entry.es_senses, "alfa");
         assert_eq!(data.lex_id("G0001"), Some(0));
+        assert_eq!(data.lex_id("g0001"), None);
+        assert_eq!(data.lex_id_fuzzy("g0001"), Some(0));
         assert_eq!(data.occurrences(0), vec![0]);
     }
 }

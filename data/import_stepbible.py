@@ -6,8 +6,12 @@ Inputs (download into data/raw/stepbible/):
   TAGNT Mat-Jhn / Act-Rev                      -> Greek words
   TBESH / TBESG                                -> brief lexicons
 
+Optional Spanish glosses:
+  data/raw/spanish/spaRV1909_usfx.xml          -> Reina-Valera 1909 (USFX)
+  pip install simplemma                        -> Spanish verb lemmas
+
 Output:
-  crates/app/data/words.bin.gz  (WRD1: verse-indexed words + lexicon)
+  crates/app/data/words.bin.gz  (WRD1 v2: verse-indexed words + lexicon)
 
 The format is documented in crates/core/src/words.rs. Run from the repository
 root, then rebuild the app with Trunk.
@@ -19,11 +23,20 @@ import html
 import re
 import struct
 import sys
+import unicodedata
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
+try:
+    import simplemma
+except ImportError:  # Optional: the pipeline still works with surface forms.
+    simplemma = None
+
 ROOT = Path(__file__).resolve().parent.parent
 RAW = ROOT / "data" / "raw" / "stepbible"
+SPANISH = ROOT / "data" / "raw" / "spanish"
+RV1909 = SPANISH / "spaRV1909_usfx.xml"
 OUT = ROOT / "crates" / "app" / "data"
 
 VERSE_COUNT = 31_102
@@ -43,6 +56,17 @@ BOOKS = {
     "2Ti": 54, "Tit": 55, "Phm": 56, "Heb": 57, "Jas": 58, "1Pe": 59,
     "2Pe": 60, "1Jn": 61, "2Jn": 62, "3Jn": 63, "Jud": 64, "Rev": 65,
 }
+
+# USFX book ids in canonical order (eBible's spaRV1909).
+USFX_IDS = [
+    "GEN", "EXO", "LEV", "NUM", "DEU", "JOS", "JDG", "RUT", "1SA", "2SA",
+    "1KI", "2KI", "1CH", "2CH", "EZR", "NEH", "EST", "JOB", "PSA", "PRO",
+    "ECC", "SNG", "ISA", "JER", "LAM", "EZK", "DAN", "HOS", "JOL", "AMO",
+    "OBA", "JON", "MIC", "NAM", "HAB", "ZEP", "HAG", "ZEC", "MAL", "MAT",
+    "MRK", "LUK", "JHN", "ACT", "ROM", "1CO", "2CO", "GAL", "EPH", "PHP",
+    "COL", "1TH", "2TH", "1TI", "2TI", "TIT", "PHM", "HEB", "JAS", "1PE",
+    "2PE", "1JN", "2JN", "3JN", "JUD", "REV",
+]
 
 HEBREW_REF = re.compile(r"^([1-3]?[A-Za-z]{2,3}\.\d+\.\d+)#(\d+)=([^\s]+)")
 GREEK_REF = re.compile(
@@ -194,6 +218,263 @@ def load_lexicon() -> dict[str, dict[str, str]]:
     return entries
 
 
+SPANISH_STOP = {
+    "y", "e", "o", "u", "de", "del", "a", "al", "á", "en", "con", "por",
+    "para", "que", "el", "la", "los", "las", "un", "una", "unos", "unas",
+    "lo", "se", "su", "sus", "mi", "mis", "tu", "tus", "le", "les", "me",
+    "nos", "os", "te", "como", "sin", "sobre", "entre", "hasta", "desde",
+    "ni", "pero", "mas", "sino", "oh", "he", "entonces", "así", "luego",
+    "después", "también", "porque", "cuando", "si", "no", "sí",
+}
+SPANISH_BAD_PHRASE_START = {
+    "él", "ella", "ellos", "ellas", "yo", "tú", "nosotros", "vosotros",
+    "este", "esta", "estos", "estas", "ese", "esa", "esos", "esas",
+    "aquel", "aquella", "aquellos", "aquellas", "mi", "mis", "tu", "tus",
+    "su", "sus", "nuestro", "nuestra", "vuestro", "vuestra", "entonces",
+    "así", "luego", "después", "también", "porque", "cuando", "si",
+}
+SPANISH_AUX = {
+    "está", "estaba", "estaban", "estando", "estén", "esté", "estar",
+    "estuvo", "habiendo", "había", "habían", "ha", "han", "he", "has",
+    "hemos", "habéis", "fue", "fué", "fueron", "era", "eran", "es", "son",
+    "ser", "sido", "sea", "sean", "tiene", "tienen", "tenía", "tenían",
+}
+SPANISH_SPECIAL = {
+    # The direct-object marker is normally left untranslated. RV1909 tags
+    # occasionally use it for pronouns, which would produce misleading glosses.
+    "H0853": ("objeto directo", "objeto directo"),
+    "G3588": ("el, la, los, las", "el · la · los · las"),
+}
+SPANISH_VERB_ENDING = re.compile(
+    r"(o|as|a|amos|áis|an|e|es|emos|éis|en|é|aste|ó|aron|aba|abas|aban|"
+    r"ía|ías|ían|aré|arás|ará|aremos|aréis|arán|aría|arías|arían|"
+    r"ando|iendo|yendo|ado|ada|ados|adas|ido|ida|idos|idas)$"
+)
+
+
+def spanish_fold(text: str) -> str:
+    return "".join(
+        char
+        for char in unicodedata.normalize("NFD", text.lower())
+        if unicodedata.category(char) != "Mn"
+    )
+
+
+def spanish_clean(text: str) -> str:
+    text = html.unescape(text)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text.strip('.,;:¡!¿?"«»“”‘’()[]')
+
+
+def spanish_normalize(text: str) -> str:
+    text = spanish_clean(text).lower()
+    tokens = text.split()
+    if not tokens:
+        return ""
+    if len(tokens) > 1:
+        while len(tokens) > 1 and tokens[0] in SPANISH_STOP:
+            tokens = tokens[1:]
+        while len(tokens) > 1 and tokens[-1] in SPANISH_STOP:
+            tokens = tokens[:-1]
+    # "estando amando", "habiendo amado" -> the lexical verb.
+    if len(tokens) >= 2 and tokens[0] in SPANISH_AUX:
+        tail = tokens[-1]
+        if re.search(r"(ando|iendo|yendo|ado|ada|ados|adas|ido|ida|idos|idas)$", tail):
+            return lemmatize_spanish(tail)
+    if len(tokens) == 1:
+        return lemmatize_spanish(tokens[0])
+    return " ".join(tokens)
+
+
+def lemmatize_spanish(word: str) -> str:
+    if simplemma is None:
+        return word
+    return simplemma.lemmatize(word, lang="es")
+
+
+def spanish_display(norm: str, surfaces: Counter[str]) -> str:
+    for surface, _ in surfaces.most_common(8):
+        clean = spanish_clean(surface)
+        if len(clean.split()) == 1 and spanish_fold(clean) == spanish_fold(norm):
+            return clean
+    return norm
+
+
+def spanish_is_inflection(candidate: str, top: str) -> bool:
+    if top.endswith(("ar", "er", "ir")) and candidate != top:
+        stem = top[:-2]
+        if candidate.startswith(stem) and SPANISH_VERB_ENDING.search(candidate):
+            return True
+    return False
+
+
+def spanish_contains(candidate: str, top: str) -> bool:
+    folded_candidate = spanish_fold(candidate)
+    folded_top = spanish_fold(top)
+    if len(folded_top) < 2:
+        return False
+    return (
+        re.search(r"(^| )" + re.escape(folded_top) + r"( |$)", folded_candidate)
+        is not None
+    )
+
+
+def spanish_senses(
+    data: dict[str, dict[str, object]],
+) -> tuple[str, str]:
+    ranked = sorted(
+        data.items(),
+        key=lambda item: (-item[1]["n"], item[1]["first"], len(item[0])),
+    )
+    if not ranked:
+        return "", ""
+    top_norm, top_data = ranked[0]
+    top = spanish_display(top_norm, top_data["surfaces"])
+    selected = [top]
+    for norm, entry in ranked[1:]:
+        if len(selected) >= 3:
+            break
+        display = spanish_display(norm, entry["surfaces"])
+        tokens = norm.split()
+        if spanish_contains(display, top):
+            continue
+        if spanish_is_inflection(display, top):
+            continue
+        if len(tokens) > 1 and tokens[0] in SPANISH_BAD_PHRASE_START:
+            continue
+        if len(tokens) > 1 and tokens[0] in SPANISH_AUX:
+            continue
+        if (
+            len(tokens) == 1
+            and spanish_fold(display) in SPANISH_BAD_PHRASE_START
+            and spanish_fold(top) not in SPANISH_BAD_PHRASE_START
+        ):
+            continue
+        # A second proper name next to a proper name is usually a compound
+        # ("Jehová Dios"), not a separate sense.
+        if (
+            top[:1].isupper()
+            and display[:1].isupper()
+            and len(display.split()) == 1
+        ):
+            continue
+        # A common noun next to a proper name is usually alignment noise
+        # ("Dios · cielo"), not a second sense of the name.
+        if top[:1].isupper() and len(tokens) == 1 and not display[:1].isupper():
+            continue
+        if entry["n"] < 2 and top_data["n"] > 10:
+            continue
+        selected.append(display)
+    return top, " · ".join(selected)
+
+
+def load_spanish_glosses(
+    verses: list[list[Word]],
+) -> dict[str, tuple[str, str]]:
+    """Align the public-domain Reina-Valera 1909 to the tagged Hebrew/Greek.
+
+    Each RV1909 `<w s="H7225">` carries a Strong number and the Spanish phrase
+    chosen by the translators. Matching those tags to the TAHOT/TAGNT word
+    order gives a Spanish gloss per disambiguated Strong key and a short list
+    of usage senses. It is not a translation of STEPBible's full definitions;
+    those remain available in English.
+    """
+    if not RV1909.exists():
+        print(
+            f"note: {RV1909} not found; Spanish glosses will be empty "
+            "(download eBible's spaRV1909 USFX)",
+            file=sys.stderr,
+        )
+        return {}
+    if simplemma is None:
+        print(
+            "note: install simplemma for Spanish verb lemmas "
+            "(pip install simplemma); using surface forms",
+            file=sys.stderr,
+        )
+
+    text = RV1909.read_text(encoding="utf-8")
+    books = list(re.finditer(r'<book id="([A-Z0-9]+)">', text))
+    rv: dict[tuple[int, int, int], list[tuple[list[str], str]]] = defaultdict(list)
+    for index, match in enumerate(books):
+        book_id = match.group(1)
+        if book_id not in USFX_IDS:
+            continue
+        book = USFX_IDS.index(book_id)
+        start = match.end()
+        end = books[index + 1].start() if index + 1 < len(books) else len(text)
+        body = text[start:end]
+        chapter = 0
+        verse = 0
+        for token in re.finditer(
+            r'<c id="(\d+)"\s*/>|<v id="(\d+)"\s*/>|<w s="([^"]+)">(.*?)</w>',
+            body,
+            re.S,
+        ):
+            if token.group(1) is not None:
+                chapter = int(token.group(1))
+                verse = 0
+            elif token.group(2) is not None:
+                verse = int(token.group(2))
+            else:
+                keys = re.findall(r"([GH]\d+)", token.group(3))
+                rv[(book, chapter, verse)].append((keys, token.group(4)))
+
+    full: dict[str, dict[str, dict[str, object]]] = defaultdict(
+        lambda: defaultdict(lambda: {"n": 0, "first": 10**9, "surfaces": Counter()})
+    )
+    for (book, chapter, verse), tags in rv.items():
+        # Reuse the canonical KJV coordinates rather than constructing a ref
+        # string for every verse.
+        if (
+            chapter < 1
+            or chapter > len(COUNTS[book])
+            or verse < 1
+            or verse > COUNTS[book][chapter - 1]
+        ):
+            continue
+        index = BOOK_STARTS[book] + sum(COUNTS[book][: chapter - 1]) + verse - 1
+        words = verses[index]
+        cursor = 0
+        for keys, raw_text in tags:
+            if len(keys) != 1:
+                continue
+            found = None
+            for candidate in range(cursor, len(words)):
+                match = re.match(r"([GH]\d+)", words[candidate].strong)
+                if match and match.group(1) == keys[0]:
+                    found = candidate
+                    break
+            if found is None:
+                continue
+            norm = spanish_normalize(raw_text)
+            if not norm or len(norm) > 60:
+                continue
+            surface = spanish_clean(raw_text)
+            entry = full[words[found].strong][norm]
+            entry["n"] += 1
+            entry["first"] = min(entry["first"], index)
+            entry["surfaces"][surface] += 1
+            cursor = found + 1
+
+    all_keys = {word.strong for words in verses for word in words}
+    result: dict[str, tuple[str, str]] = {}
+    for key in sorted(all_keys):
+        if key in SPANISH_SPECIAL:
+            result[key] = SPANISH_SPECIAL[key]
+            continue
+        data = full.get(key)
+        if data:
+            result[key] = spanish_senses(data)
+    covered = sum(1 for gloss, _ in result.values() if gloss)
+    print(
+        f"Spanish glosses: {covered} of {len(all_keys)} keys "
+        f"({len(full)} full-key alignments)"
+    )
+    return result
+
+
 def match_lexicon(key: str, entries: dict[str, dict[str, str]]) -> dict[str, str] | None:
     if key in entries:
         return entries[key]
@@ -339,6 +620,7 @@ def build_binary(
     used: dict[str, int],
     morph_codes: list[str],
     lexicon: dict[str, dict[str, str]],
+    spanish: dict[str, tuple[str, str]],
 ) -> bytes:
     if len(morph_codes) >= MORPH_NONE:
         raise SystemExit(f"too many morphology codes: {len(morph_codes)}")
@@ -387,6 +669,7 @@ def build_binary(
             "gloss": "",
             "meaning": "",
         }
+        es_gloss, es_senses = spanish.get(key, ("", ""))
         values = [
             key,
             entry["lemma"],
@@ -394,17 +677,19 @@ def build_binary(
             entry["morph"],
             entry["gloss"],
             entry["meaning"],
+            es_gloss,
+            es_senses,
         ]
         parts: list[int] = []
         for value in values:
             offset, length = add_text(value)
             parts.extend((offset, length))
-        lex_records.extend(struct.pack("<12I", *parts))
+        lex_records.extend(struct.pack("<16I", *parts))
 
     header = struct.pack(
         "<4sHHIIIIII",
         b"WRD1",
-        1,
+        2,
         0,
         VERSE_COUNT,
         len(word_records) // 14,
@@ -432,7 +717,8 @@ def main() -> None:
         )
     lexicon = load_lexicon()
     verses, used, morph_codes = parse()
-    raw = build_binary(verses, used, morph_codes, lexicon)
+    spanish = load_spanish_glosses(verses)
+    raw = build_binary(verses, used, morph_codes, lexicon, spanish)
     compressed = gzip.compress(raw, compresslevel=9, mtime=0)
     OUT.mkdir(parents=True, exist_ok=True)
     output = OUT / "words.bin.gz"

@@ -100,6 +100,7 @@ fn App() -> impl IntoView {
                     </div>
                 </div>
                 <div class="stats" id="stats"></div>
+                <div class="lemma-banner" id="lemma-banner" role="status" aria-live="polite" hidden></div>
                 <div class="hints">
                     <span>{i18n::tr(lang, "rueda para acercar", "scroll to zoom")}</span>
                     <span>{i18n::tr(lang, "arrastrar para desplazar", "drag to pan")}</span>
@@ -183,7 +184,11 @@ fn App() -> impl IntoView {
                     " (CC BY 4.0), reindexed · Text: Platense (Straubinger, public domain) and ASV (public domain) · Original: ",
                 )}
                 <a href="https://STEPBible.org" target="_blank" rel="noopener">"STEPBible"</a>
-                {i18n::tr(lang, " (CC BY 4.0).", " (CC BY 4.0).")}
+                {i18n::tr(
+                    lang,
+                    " (CC BY 4.0) · Glosas: RV1909 (dominio público).",
+                    " (CC BY 4.0) · Glosses: RV1909 (public domain).",
+                )}
             </footer>
             <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
         </div>
