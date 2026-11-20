@@ -156,12 +156,23 @@ def clean_lexicon_text(text: str, *, multiline: bool = True) -> str:
     return text.strip()
 
 
+def source_files(prefix: str) -> list[Path]:
+    """Accept both the short names and the long STEPBible download names."""
+    return sorted(
+        path
+        for path in RAW.iterdir()
+        if path.is_file()
+        and path.suffix.lower() == ".txt"
+        and path.name.lower().startswith(prefix.lower())
+    )
+
+
 def load_lexicon() -> dict[str, dict[str, str]]:
     entries: dict[str, dict[str, str]] = {}
-    for filename in ("tbesh.txt", "tbesg.txt"):
-        path = RAW / filename
-        if not path.exists():
-            raise SystemExit(f"missing {path}")
+    paths = source_files("tbesh") + source_files("tbesg")
+    if not paths:
+        raise SystemExit(f"missing TBESH/TBESG in {RAW}")
+    for path in paths:
         with path.open(encoding="utf-8-sig") as handle:
             for line in handle:
                 fields = line.rstrip("\n").split("\t")
@@ -205,13 +216,10 @@ def parse() -> tuple[list[list[Word]], dict[str, int], list[str]]:
     skipped_extra = 0
     skipped_unknown = 0
 
-    for filename in (
-        "tahot_gen-deu.txt",
-        "tahot_jos-est.txt",
-        "tahot_job-sng.txt",
-        "tahot_isa-mal.txt",
-    ):
-        path = RAW / filename
+    tahot_files = source_files("tahot")
+    if not tahot_files:
+        raise SystemExit(f"missing TAHOT files in {RAW}")
+    for path in tahot_files:
         with path.open(encoding="utf-8-sig") as handle:
             for line in handle:
                 if line.startswith("#") or "\t" not in line:
@@ -246,8 +254,10 @@ def parse() -> tuple[list[list[Word]], dict[str, int], list[str]]:
                     )
                 )
 
-    for filename in ("tagnt_mat-jhn.txt", "tagnt_act-rev.txt"):
-        path = RAW / filename
+    tagnt_files = source_files("tagnt")
+    if not tagnt_files:
+        raise SystemExit(f"missing TAGNT files in {RAW}")
+    for path in tagnt_files:
         with path.open(encoding="utf-8-sig") as handle:
             for line in handle:
                 if line.startswith("#") or "\t" not in line:
