@@ -457,6 +457,13 @@ fn update_lemma_banner(shared: &Rc<RefCell<Shared>>) {
         )
     };
     let lang = i18n::lang();
+    if let Some(stage) = element("stage") {
+        if lemma.is_some() || loading || error.is_some() {
+            let _ = stage.set_class_name("stage lemma-mode");
+        } else {
+            let _ = stage.set_class_name("stage");
+        }
+    }
     if let Some(lemma) = lemma {
         banner.set_inner_html(&format!(
             "<span class=\"lemma-kicker\">{}</span><strong class=\"lemma-key\">{}</strong><span class=\"lemma-gloss\">{}</span><span class=\"lemma-count\">{} {}</span><button class=\"lemma-clear\" type=\"button\" data-lemma-clear aria-label=\"{}\">×</button>",
