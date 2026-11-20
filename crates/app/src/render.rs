@@ -119,8 +119,47 @@ struct GlowUniforms {
     pad: [f32; 2],
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FilterState {
+    /// `Some(0)` = Old Testament, `Some(1)` = New Testament.
+    pub testament: Option<u8>,
+    pub genre: Option<u8>,
+    pub book: Option<u8>,
+}
+
+impl FilterState {
+    pub fn is_active(self) -> bool {
+        self.testament.is_some() || self.genre.is_some() || self.book.is_some()
+    }
+
+    /// Filters apply to the source verse: "references from this book/genre".
+    pub fn matches_source(self, verse: u32, versification: &Versification) -> bool {
+        let Some(reference) = versification.ref_at(verse) else {
+            return true;
+        };
+        if let Some(book) = self.book {
+            if reference.book != usize::from(book) {
+                return false;
+            }
+        }
+        if let Some(genre) = self.genre {
+            if usize::from(tables::BOOK_GENRES[reference.book]) != usize::from(genre) {
+                return false;
+            }
+        }
+        if let Some(testament) = self.testament {
+            let is_old = reference.book < 39;
+            if is_old != (testament == 0) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
 pub enum Command {
     Votes(i16),
+    Filters(FilterState),
     Focus(Option<(u32, u32)>),
     Search(String),
 }
@@ -154,6 +193,7 @@ struct Shared {
     /// Hover/focus range whose links are currently drawn as ribbons.
     highlighted: Option<(u32, u32)>,
     votes: i16,
+    filters: FilterState,
     last_input: f64,
 }
 
@@ -271,14 +311,178 @@ fn performance_now() -> f64 {
         .unwrap_or(0.0)
 }
 
+fn votes_from_url(window: &web_sys::Window) -> i16 {
+    i18n::query_param(window, "votes")
+        .and_then(|value| value.parse::<i16>().ok())
+        .map(|votes| votes.clamp(0, 100))
+        .unwrap_or(MIN_VOTES)
+}
+
+fn filters_from_url(window: &web_sys::Window) -> FilterState {
+    FilterState {
+        testament: match i18n::query_param(window, "testament").as_deref() {
+            Some("ot") => Some(0),
+            Some("nt") => Some(1),
+            _ => None,
+        },
+        genre: i18n::query_param(window, "genre")
+            .and_then(|value| value.parse::<u8>().ok())
+            .filter(|genre| usize::from(*genre) < tables::GENRE_NAMES.len()),
+        book: i18n::query_param(window, "book")
+            .and_then(|value| {
+                tables::BOOK_IDS
+                    .iter()
+                    .position(|candidate| *candidate == value)
+            })
+            .map(|book| book as u8),
+    }
+}
+
+fn update_filter_url(window: &web_sys::Window, filters: FilterState, votes: i16) {
+    let mut owned: Vec<(&str, String)> = Vec::new();
+    match filters.testament {
+        Some(0) => owned.push(("testament", "ot".into())),
+        Some(1) => owned.push(("testament", "nt".into())),
+        _ => {}
+    }
+    if let Some(genre) = filters.genre {
+        owned.push(("genre", genre.to_string()));
+    }
+    if let Some(book) = filters.book {
+        owned.push(("book", tables::BOOK_IDS[usize::from(book)].to_string()));
+    }
+    if votes != MIN_VOTES {
+        owned.push(("votes", votes.to_string()));
+    }
+    let set: Vec<(&str, &str)> = owned
+        .iter()
+        .map(|(key, value)| (*key, value.as_str()))
+        .collect();
+    let url = i18n::url_with(window, &set, &["testament", "genre", "book", "votes"]);
+    if let Ok(history) = window.history() {
+        let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&url));
+    }
+}
+
+fn show_toast(message: &str) {
+    let Some(toast) = element("toast") else {
+        return;
+    };
+    toast.set_text_content(Some(message));
+    let _ = toast.remove_attribute("hidden");
+    if let Some(window) = web_sys::window() {
+        let handler = Closure::<dyn FnMut()>::new(move || {
+            if let Some(toast) = element("toast") {
+                let _ = toast.set_attribute("hidden", "");
+            }
+        });
+        let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
+            handler.as_ref().unchecked_ref(),
+            2400,
+        );
+        handler.forget();
+    }
+}
+
+fn share_current() {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let url = window.location().href().unwrap_or_default();
+    let title = window
+        .document()
+        .map(|document| document.title())
+        .unwrap_or_else(|| "Aletheia · Referencias cruzadas".into());
+    let navigator = window.navigator();
+    let share = js_sys::Reflect::get(navigator.as_ref(), &JsValue::from_str("share"))
+        .ok()
+        .and_then(|value| value.dyn_into::<js_sys::Function>().ok());
+    if let Some(share) = share {
+        let data = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&data, &JsValue::from_str("title"), &JsValue::from_str(&title));
+        let _ = js_sys::Reflect::set(
+            &data,
+            &JsValue::from_str("text"),
+            &JsValue::from_str(i18n::tr(
+                i18n::lang(),
+                "Referencias cruzadas de la Biblia",
+                "Bible cross references",
+            )),
+        );
+        let _ = js_sys::Reflect::set(&data, &JsValue::from_str("url"), &JsValue::from_str(&url));
+        if let Ok(result) = share.call1(&navigator, &data) {
+            if let Ok(promise) = result.dyn_into::<js_sys::Promise>() {
+                wasm_bindgen_futures::spawn_local(async move {
+                    let _ = JsFuture::from(promise).await;
+                });
+            }
+        }
+        return;
+    }
+
+    let lang = i18n::lang();
+    let clipboard = navigator.clipboard();
+    let fallback = url.clone();
+    wasm_bindgen_futures::spawn_local(async move {
+        match JsFuture::from(clipboard.write_text(&url)).await {
+            Ok(_) => show_toast(i18n::tr(lang, "Enlace copiado", "Link copied")),
+            Err(_) if legacy_copy(&fallback) => {
+                show_toast(i18n::tr(lang, "Enlace copiado", "Link copied"))
+            }
+            Err(_) => show_toast(i18n::tr(
+                lang,
+                "No se pudo copiar el enlace",
+                "Could not copy the link",
+            )),
+        }
+    });
+}
+
+/// Clipboard fallback for browsers without the async clipboard API.
+fn legacy_copy(text: &str) -> bool {
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+        return false;
+    };
+    let Some(body) = document.body() else {
+        return false;
+    };
+    let Ok(node) = document.create_element("textarea") else {
+        return false;
+    };
+    let Ok(textarea) = node.dyn_into::<web_sys::HtmlTextAreaElement>() else {
+        return false;
+    };
+    textarea.set_value(text);
+    let _ = textarea.set_attribute(
+        "style",
+        "position:fixed;top:-1000px;left:-1000px;opacity:0;pointer-events:none",
+    );
+    if body.append_child(textarea.as_ref()).is_err() {
+        return false;
+    }
+    textarea.select();
+    let copied = js_sys::Reflect::get(document.as_ref(), &JsValue::from_str("execCommand"))
+        .ok()
+        .and_then(|function| function.dyn_into::<js_sys::Function>().ok())
+        .and_then(|function| {
+            function
+                .call1(document.as_ref(), &JsValue::from_str("copy"))
+                .ok()
+        })
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let _ = textarea.remove();
+    copied
+}
+
 pub async fn run() -> Result<(), JsValue> {
     let window = web_sys::window().ok_or_else(|| JsValue::from_str("no window"))?;
     let document = window.document().ok_or_else(|| JsValue::from_str("no document"))?;
     let lang = i18n::lang_of(&window);
     document.set_title(i18n::tr(
         lang,
-        "Referencias cruzadas de la Biblia · Rust",
-        "Bible Cross References · Rust",
+        "Referencias cruzadas de la Biblia · Aletheia",
+        "Bible Cross References · Aletheia",
     ));
     let canvas: HtmlCanvasElement = document
         .get_element_by_id("arcs")
@@ -775,6 +979,8 @@ pub async fn run() -> Result<(), JsValue> {
 
     let layout = Layout::compute(css_width, css_height);
     let now = performance_now();
+    let initial_votes = votes_from_url(&window);
+    let initial_filters = filters_from_url(&window);
     let shared = Rc::new(RefCell::new(Shared {
         width: css_width,
         height: css_height,
@@ -794,11 +1000,20 @@ pub async fn run() -> Result<(), JsValue> {
         hover_verse: None,
         focus: None,
         highlighted: None,
-        votes: MIN_VOTES,
+        votes: initial_votes,
+        filters: initial_filters,
         last_input: now,
     }));
 
-    let stats = compute_stats(&links_all, MIN_VOTES, total_links, &versification);
+    let initial_active: Vec<Link> = links_all
+        .iter()
+        .filter(|link| {
+            link.votes >= initial_votes
+                && initial_filters.matches_source(link.source, &versification)
+        })
+        .copied()
+        .collect();
+    let stats = compute_stats(&initial_active, initial_votes, total_links, &versification);
     update_stats(&stats);
     attach_input(&canvas, &window, shared.clone(), versification.clone());
     attach_chrome(&shared);
@@ -808,7 +1023,7 @@ pub async fn run() -> Result<(), JsValue> {
     if let Some(reference) = query_param(&window, "ref") {
         if let Some((start, end)) = parse_reference(&reference, &versification) {
             apply_focus(&shared, start, end, &versification);
-            open_panel(&shared, &links_all, &versification, &text, MIN_VOTES);
+            open_panel(&shared, &links_all, &versification, &text, initial_votes);
         } else {
             invalid_reference = true;
             set_status(i18n::tr(
@@ -841,6 +1056,7 @@ pub async fn run() -> Result<(), JsValue> {
     let mut buffer_index = 0usize;
     let mut ordered: Vec<Instance> = Vec::with_capacity(links_all.len());
     let mut active_votes = i16::MIN;
+    let mut active_filters = FilterState::default();
     let mut active: Vec<Link> = Vec::with_capacity(links_all.len());
     let mut force_rebuild = true;
     let mut accumulate_dirty = true;
@@ -880,6 +1096,15 @@ pub async fn run() -> Result<(), JsValue> {
                     if let Some(value) = element("votes-value") {
                         value.set_text_content(Some(&votes.to_string()));
                     }
+                    let filters = shared.borrow().filters;
+                    update_filter_url(&window, filters, votes);
+                }
+                Command::Filters(filters) => {
+                    shared.borrow_mut().filters = filters;
+                    shared.borrow_mut().mark_scene(frame_now);
+                    force_rebuild = true;
+                    let votes = shared.borrow().votes;
+                    update_filter_url(&window, filters, votes);
                 }
                 Command::Focus(passage) => {
                     if let Some((start, end)) = passage {
@@ -920,14 +1145,27 @@ pub async fn run() -> Result<(), JsValue> {
         }
 
         let votes = shared.borrow().votes;
-        if votes != active_votes {
+        let filters = shared.borrow().filters;
+        if votes != active_votes || filters != active_filters {
             active_votes = votes;
+            active_filters = filters;
             active.clear();
-            active.extend(links_all.iter().filter(|link| link.votes >= votes).copied());
+            active.extend(
+                links_all
+                    .iter()
+                    .filter(|link| {
+                        link.votes >= votes
+                            && filters.matches_source(link.source, &versification)
+                    })
+                    .copied(),
+            );
             let stats = compute_stats(&active, votes, total_links, &versification);
             update_stats(&stats);
             force_rebuild = true;
             shared.borrow_mut().mark_scene(frame_now);
+            if shared.borrow().focus.is_some() {
+                open_panel(&shared, &links_all, &versification, &text, votes);
+            }
         }
 
         let css_width = canvas.client_width().max(1) as f32;
@@ -1248,13 +1486,14 @@ fn open_panel(
     votes: i16,
 ) {
     let focus = shared.borrow().focus;
+    let filters = shared.borrow().filters;
     let Some((start, end)) = focus else {
         if let Some(panel) = element("panel") {
             let _ = panel.set_attribute("hidden", "");
         }
         return;
     };
-    let html = panel_html(start, end, links, versification, text, votes);
+    let html = panel_html(start, end, links, versification, text, votes, filters);
     if let Some(panel) = element("panel") {
         panel.set_inner_html(&html);
         let _ = panel.remove_attribute("hidden");
@@ -1283,6 +1522,7 @@ fn panel_html(
     versification: &Versification,
     text: &TranslationText,
     votes: i16,
+    filters: FilterState,
 ) -> String {
     let lang = i18n::lang();
     let (Some(first), Some(last)) = (versification.ref_at(start), versification.ref_at(end)) else {
@@ -1323,7 +1563,12 @@ fn panel_html(
 
     let mut outgoing: Vec<&Link> = links
         .iter()
-        .filter(|link| link.votes >= votes && link.source >= start && link.source <= end)
+        .filter(|link| {
+            link.votes >= votes
+                && filters.matches_source(link.source, versification)
+                && link.source >= start
+                && link.source <= end
+        })
         .collect();
     outgoing.sort_by(|a, b| b.votes.cmp(&a.votes));
     let outgoing_total = outgoing.len();
@@ -1331,7 +1576,12 @@ fn panel_html(
 
     let mut incoming: Vec<&Link> = links
         .iter()
-        .filter(|link| link.votes >= votes && link.start <= end && link.end >= start)
+        .filter(|link| {
+            link.votes >= votes
+                && filters.matches_source(link.source, versification)
+                && link.start <= end
+                && link.end >= start
+        })
         .collect();
     incoming.sort_by(|a, b| b.votes.cmp(&a.votes));
     let incoming_total = incoming.len();
@@ -1706,6 +1956,60 @@ pub(crate) fn attach_translation_select(window: &web_sys::Window) {
     handler.forget();
 }
 
+fn set_range_progress(range: &HtmlInputElement, votes: i16) {
+    let _ = range.set_attribute(
+        "style",
+        &format!("--range-progress:{}%", votes.clamp(0, 100)),
+    );
+}
+
+fn set_filters_active(active: bool) {
+    if let Some(toggle) = element("filters-toggle") {
+        if active {
+            let _ = toggle.set_attribute("class", "filters-toggle has-filters");
+        } else {
+            let _ = toggle.set_attribute("class", "filters-toggle");
+        }
+    }
+}
+
+fn read_filters(document: &web_sys::Document) -> FilterState {
+    let value = |id: &str| {
+        document
+            .get_element_by_id(id)
+            .and_then(|node| node.dyn_into::<web_sys::HtmlSelectElement>().ok())
+            .map(|select| select.value())
+            .unwrap_or_default()
+    };
+    FilterState {
+        testament: match value("filter-testament").as_str() {
+            "ot" => Some(0),
+            "nt" => Some(1),
+            _ => None,
+        },
+        genre: value("filter-genre")
+            .parse::<u8>()
+            .ok()
+            .filter(|genre| usize::from(*genre) < tables::GENRE_NAMES.len()),
+        book: tables::BOOK_IDS
+            .iter()
+            .position(|candidate| *candidate == value("filter-book"))
+            .map(|book| book as u8),
+    }
+}
+
+pub(crate) fn attach_share(window: &web_sys::Window) {
+    let Some(share) = window
+        .document()
+        .and_then(|document| document.get_element_by_id("share"))
+    else {
+        return;
+    };
+    let handler = Closure::<dyn FnMut()>::new(share_current);
+    let _ = share.add_event_listener_with_callback("click", handler.as_ref().unchecked_ref());
+    handler.forget();
+}
+
 fn attach_chrome(shared: &Rc<RefCell<Shared>>) {
     let window = web_sys::window().unwrap();
     let document = window.document().unwrap();
@@ -1715,18 +2019,97 @@ fn attach_chrome(shared: &Rc<RefCell<Shared>>) {
             if let Some(filters) = element("filters") {
                 if filters.has_attribute("hidden") {
                     let _ = filters.remove_attribute("hidden");
+                    if let Some(toggle) = element("filters-toggle") {
+                        let _ = toggle.set_attribute("aria-expanded", "true");
+                    }
                 } else {
                     let _ = filters.set_attribute("hidden", "");
+                    if let Some(toggle) = element("filters-toggle") {
+                        let _ = toggle.set_attribute("aria-expanded", "false");
+                    }
                 }
             }
         });
         let _ = toggle.add_event_listener_with_callback("click", handler.as_ref().unchecked_ref());
         handler.forget();
     }
-    if let Some(range) = document
-        .get_element_by_id("votes")
-        .and_then(|node| node.dyn_into::<HtmlInputElement>().ok())
+    if let Some(close) = document.get_element_by_id("filters-close") {
+        let handler = Closure::<dyn FnMut()>::new(move || {
+            if let Some(filters) = element("filters") {
+                let _ = filters.set_attribute("hidden", "");
+            }
+            if let Some(toggle) = element("filters-toggle") {
+                let _ = toggle.set_attribute("aria-expanded", "false");
+            }
+        });
+        let _ = close.add_event_listener_with_callback("click", handler.as_ref().unchecked_ref());
+        handler.forget();
+    }
+
+    let filters = shared.borrow().filters;
+    set_filters_active(filters.is_active());
+    if let Some(select) = document
+        .get_element_by_id("filter-testament")
+        .and_then(|node| node.dyn_into::<web_sys::HtmlSelectElement>().ok())
     {
+        select.set_value(match filters.testament {
+            Some(0) => "ot",
+            Some(1) => "nt",
+            _ => "",
+        });
+    }
+    if let Some(select) = document
+        .get_element_by_id("filter-genre")
+        .and_then(|node| node.dyn_into::<web_sys::HtmlSelectElement>().ok())
+    {
+        select.set_value(
+            &filters
+                .genre
+                .map(|genre| genre.to_string())
+                .unwrap_or_default(),
+        );
+    }
+    if let Some(select) = document
+        .get_element_by_id("filter-book")
+        .and_then(|node| node.dyn_into::<web_sys::HtmlSelectElement>().ok())
+    {
+        select.set_value(
+            &filters
+                .book
+                .map(|book| tables::BOOK_IDS[usize::from(book)].to_string())
+                .unwrap_or_default(),
+        );
+    }
+    for id in ["filter-testament", "filter-genre", "filter-book"] {
+        let Some(select) = document
+            .get_element_by_id(id)
+            .and_then(|node| node.dyn_into::<web_sys::HtmlSelectElement>().ok())
+        else {
+            continue;
+        };
+        let handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
+            if let Some(document) = web_sys::window().and_then(|window| window.document()) {
+                let filters = read_filters(&document);
+                set_filters_active(filters.is_active());
+                send(Command::Filters(filters));
+            }
+        });
+        let _ = select.add_event_listener_with_callback("change", handler.as_ref().unchecked_ref());
+        handler.forget();
+    }
+
+    let votes = shared.borrow().votes;
+    let range = document
+        .get_element_by_id("votes")
+        .and_then(|node| node.dyn_into::<HtmlInputElement>().ok());
+    if let Some(range) = &range {
+        range.set_value(&votes.to_string());
+        set_range_progress(range, votes);
+    }
+    if let Some(label) = element("votes-value") {
+        label.set_text_content(Some(&votes.to_string()));
+    }
+    if let Some(range) = range {
         let shared = shared.clone();
         let handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
             if let Some(target) = event.target().and_then(|t| t.dyn_into::<HtmlInputElement>().ok()) {
@@ -1734,6 +2117,7 @@ fn attach_chrome(shared: &Rc<RefCell<Shared>>) {
                     if let Some(label) = element("votes-value") {
                         label.set_text_content(Some(&value.to_string()));
                     }
+                    set_range_progress(&target, value);
                     send(Command::Votes(value));
                     shared.borrow_mut().mark_scene(performance_now());
                 }
@@ -1742,6 +2126,38 @@ fn attach_chrome(shared: &Rc<RefCell<Shared>>) {
         let _ = range.add_event_listener_with_callback("input", handler.as_ref().unchecked_ref());
         handler.forget();
     }
+
+    if let Some(reset) = document.get_element_by_id("filters-reset") {
+        let handler = Closure::<dyn FnMut()>::new(move || {
+            if let Some(document) = web_sys::window().and_then(|window| window.document()) {
+                for id in ["filter-testament", "filter-genre", "filter-book"] {
+                    if let Some(select) = document
+                        .get_element_by_id(id)
+                        .and_then(|node| node.dyn_into::<web_sys::HtmlSelectElement>().ok())
+                    {
+                        select.set_value("");
+                    }
+                }
+                if let Some(range) = document
+                    .get_element_by_id("votes")
+                    .and_then(|node| node.dyn_into::<HtmlInputElement>().ok())
+                {
+                    range.set_value(&MIN_VOTES.to_string());
+                    set_range_progress(&range, MIN_VOTES);
+                }
+                if let Some(label) = element("votes-value") {
+                    label.set_text_content(Some(&MIN_VOTES.to_string()));
+                }
+            }
+            set_filters_active(false);
+            send(Command::Filters(FilterState::default()));
+            send(Command::Votes(MIN_VOTES));
+        });
+        let _ = reset.add_event_listener_with_callback("click", handler.as_ref().unchecked_ref());
+        handler.forget();
+    }
+
+    attach_share(&window);
     attach_translation_select(&window);
     i18n::attach_language_select(&window);
     if let Some(search) = document

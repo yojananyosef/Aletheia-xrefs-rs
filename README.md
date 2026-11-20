@@ -1,4 +1,4 @@
-# Bible Cross-References · Rust
+# Aletheia · Referencias cruzadas de la Biblia
 
 Visualizador web de referencias cruzadas de la Biblia escrito en **Rust +
 WebAssembly**, con **Leptos** para la interfaz y **wgpu** (WebGPU, con retroceso
@@ -24,8 +24,14 @@ automático a WebGL2) para el diagrama de arcos.
       dirección (remite a / citado por / ambos).
 - [x] Texto bíblico en español (Platense) e inglés (ASV), con selector de
       idioma y de versión; el idioma elige la traducción por defecto.
-- [ ] Filtros por testamento, género y libro; palabras originales; compartir;
-      PWA y SEO.
+- [x] Filtros por testamento, género y libro (aplicados al versículo de
+      origen), combinables con el umbral de votos y persistidos en la URL.
+- [x] Compartir el enlace actual con Web Share API y copia al portapapeles.
+- [x] PWA instalable: manifest, iconos, *service worker* y caché offline.
+- [x] SEO técnico: metadatos, Open Graph/Twitter, JSON-LD, `robots.txt`,
+      `sitemap.xml` e imagen social.
+- [ ] Palabras originales (hebreo/griego con léxico y Strong): requiere un
+      corpus textual distinto del actual; queda como siguiente fase.
 
 ## Compilar
 
@@ -53,6 +59,18 @@ La edición Platense no incluye Números 1:54, Marcos 9:44 y 9:46 ni Hechos 8:37
 (este último también falta en la ASV); la interfaz los marca como «No incluido
 en esta versión» en lugar de inventar texto.
 
+## Publicar en GitHub Pages
+
+```bash
+scripts/deploy-pages.sh
+```
+
+El script compila `crates/app` con Trunk y publica `dist/` en la rama
+`gh-pages` (incluidos los binarios de datos). En GitHub, la fuente de Pages debe
+ser la rama `gh-pages`, carpeta `/`. `Trunk.toml` usa `public_url = "./"` para
+que los recursos funcionen bajo la subruta del proyecto.
+Sitio: <https://yojananyosef.github.io/Aletheia-xrefs-rs/>.
+
 ## Diseño
 
 ```
@@ -60,6 +78,12 @@ crates/core   dominio canónico, versificación, formatos binarios
 crates/data   pipeline de datos (OpenBible, Platense, ASV) + verificación
 crates/app    Leptos + wgpu + shaders WGSL
 ```
+
+La interfaz usa un sistema de diseño propio en CSS: variables de color,
+tipografía y espaciado, controles nativos estilizados y una serif editorial para
+el texto bíblico. Tailwind puede integrarse con Trunk mediante su CLI, pero
+`shadcn` es específico de React; para Leptos existen bibliotecas como Thaw o
+leptonic. Aquí se evitó añadir otra capa para no duplicar estilos ni peso.
 
 - **Coordenadas**: índice denso de versículo en orden KJV (`0..31102`).
 - **Enlaces**: CSR por versículo fuente; cada enlace guarda rango destino y

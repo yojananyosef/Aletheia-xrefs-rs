@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://yojananyosef.github.io/Aletheia-xrefs-rs/sitemap.xml

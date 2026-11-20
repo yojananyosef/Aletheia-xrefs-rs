@@ -931,11 +931,12 @@ pub async fn run(xrefs: XrefData, text: TranslationText) -> Result<(), JsValue> 
     if let Some(document) = window.document() {
         document.set_title(i18n::tr(
             lang,
-            "Hilos · Referencias cruzadas de la Biblia",
-            "Threads · Bible Cross References",
+            "Hilos · Aletheia",
+            "Threads · Aletheia",
         ));
     }
     crate::render::attach_translation_select(&window);
+    crate::render::attach_share(&window);
     i18n::attach_language_select(&window);
     let threads = Threads::new(&xrefs, text, Versification::kjv())?;
     let initial = crate::render::query_param(&window, "ref")
