@@ -26,6 +26,9 @@ automático a WebGL2) para el diagrama de arcos.
       idioma y de versión; el idioma elige la traducción por defecto.
 - [x] Filtros por testamento, género y libro (aplicados al versículo de
       origen), combinables con el umbral de votos y persistidos en la URL.
+- [x] Selectores de versión, idioma y filtros con menú temático propio y hoja
+      inferior en móvil; en el diagrama, pulsación larga para previsualizar un
+      versículo y sus referencias.
 - [x] Compartir el enlace actual con Web Share API y copia al portapapeles.
 - [x] PWA instalable: manifest, iconos, *service worker* y caché offline.
 - [x] SEO técnico: metadatos, Open Graph/Twitter, JSON-LD, `robots.txt`,

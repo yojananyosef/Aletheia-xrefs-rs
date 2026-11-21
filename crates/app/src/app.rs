@@ -107,6 +107,9 @@ fn App() -> impl IntoView {
                     <span>{i18n::tr(lang, "clic para elegir", "click to select")}</span>
                 </div>
                 <div class="tooltip" id="tooltip" hidden></div>
+                <div class="touch-hint" id="touch-hint">
+                    {i18n::tr(lang, "Toca para abrir · Mantén pulsado para explorar", "Tap to open · Hold to explore")}
+                </div>
                 <div class="filters" id="filters" hidden>
                     <div class="filters-head">
                         <div>

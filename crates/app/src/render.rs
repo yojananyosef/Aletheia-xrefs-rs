@@ -216,6 +216,11 @@ struct Shared {
     down_x: f32,
     down_y: f32,
     down_time: f64,
+    /// Pending long-press preview (touch/pen only).
+    press_timer: Option<i32>,
+    long_press: bool,
+    /// Last hover came from a touch, so the tooltip goes above the finger.
+    touch_hover: bool,
     scene_dirty: bool,
     overlay_dirty: bool,
     accumulate_dirty: bool,
@@ -1166,6 +1171,9 @@ pub async fn run() -> Result<(), JsValue> {
         down_x: 0.0,
         down_y: 0.0,
         down_time: 0.0,
+        press_timer: None,
+        long_press: false,
+        touch_hover: false,
         scene_dirty: true,
         overlay_dirty: true,
         accumulate_dirty: true,
@@ -2375,10 +2383,32 @@ fn update_tooltip(state: &Shared, versification: &Versification, stats: &Stats) 
         count,
         i18n::tr(lang, "referencias", "references")
     ));
-    let x = state.last_x + 14.0;
-    let y = state.last_y + 14.0;
+    let max_x = (state.width - 210.0).max(8.0);
+    let max_y = (state.height - 58.0).max(8.0);
+    let (x, y) = if state.touch_hover {
+        let above = state.last_y - 58.0;
+        let y = if above >= 8.0 {
+            above
+        } else {
+            (state.last_y + 20.0).min(max_y)
+        };
+        ((state.last_x - 26.0).clamp(8.0, max_x), y.clamp(8.0, max_y))
+    } else {
+        (
+            (state.last_x + 14.0).clamp(8.0, max_x),
+            (state.last_y + 14.0).clamp(8.0, max_y),
+        )
+    };
     let _ = tooltip.set_attribute("style", &format!("left:{x}px; top:{y}px;"));
     let _ = tooltip.remove_attribute("hidden");
+}
+
+fn cancel_press_timer(state: &mut Shared) {
+    if let Some(handle) = state.press_timer.take() {
+        if let Some(window) = web_sys::window() {
+            window.clear_timeout_with_handle(handle);
+        }
+    }
 }
 
 fn attach_input(
@@ -2390,16 +2420,21 @@ fn attach_input(
     let down = {
         let shared = shared.clone();
         let canvas = canvas.clone();
+        let versification = versification.clone();
         Closure::<dyn FnMut(PointerEvent)>::new(move |event: PointerEvent| {
             if event.pointer_type() == "mouse" && event.button() != 0 {
                 return;
             }
+            let touch = event.pointer_type() != "mouse";
             let rect = canvas.get_bounding_client_rect();
             let x = event.client_x() as f32 - rect.left() as f32;
             let y = event.client_y() as f32 - rect.top() as f32;
             {
                 let mut state = shared.borrow_mut();
+                cancel_press_timer(&mut state);
                 state.dragging = true;
+                state.long_press = false;
+                state.touch_hover = touch;
                 state.last_x = x;
                 state.last_y = y;
                 state.down_x = x;
@@ -2412,8 +2447,60 @@ fn attach_input(
             if let Some(tooltip) = element("tooltip") {
                 let _ = tooltip.set_attribute("hidden", "");
             }
+            if touch {
+                if let Some(hint) = element("touch-hint") {
+                    let _ = hint.set_attribute("hidden", "");
+                }
+            }
             canvas.set_pointer_capture(event.pointer_id()).ok();
             event.prevent_default();
+            if touch {
+                let timer_shared = shared.clone();
+                let versification = versification.clone();
+                let handler = Closure::<dyn FnMut()>::new(move || {
+                    let mut state = timer_shared.borrow_mut();
+                    state.press_timer = None;
+                    if !state.dragging || state.long_press {
+                        return;
+                    }
+                    let moved = ((state.last_x - state.down_x).powi(2)
+                        + (state.last_y - state.down_y).powi(2))
+                    .sqrt();
+                    if moved > 7.0 {
+                        return;
+                    }
+                    let along = state.layout.along_of(state.down_x, state.down_y);
+                    let inside =
+                        along >= state.layout.axis_start && along <= state.layout.axis_end;
+                    let verse = state.layout.along_to_verse(state.view, along);
+                    let ppv = state.layout.pixels_per_verse(state.view);
+                    state.hover = if inside {
+                        passage_at(verse, ppv, &versification)
+                    } else {
+                        None
+                    };
+                    state.hover_verse = if inside {
+                        Some((verse.floor() as u32).min(TOTAL_VERSES - 1))
+                    } else {
+                        None
+                    };
+                    state.last_x = state.down_x;
+                    state.last_y = state.down_y;
+                    state.long_press = true;
+                    state.mark_overlay();
+                });
+                if let Some(window) = web_sys::window() {
+                    if let Ok(handle) = window
+                        .set_timeout_with_callback_and_timeout_and_arguments_0(
+                            handler.as_ref().unchecked_ref(),
+                            430,
+                        )
+                    {
+                        shared.borrow_mut().press_timer = Some(handle);
+                    }
+                }
+                handler.forget();
+            }
         })
     };
     let up = {
@@ -2424,11 +2511,23 @@ fn attach_input(
             let rect = canvas.get_bounding_client_rect();
             let x = event.client_x() as f32 - rect.left() as f32;
             let y = event.client_y() as f32 - rect.top() as f32;
-            let click = {
-                let state = shared.borrow();
+            let (click, long_press) = {
+                let mut state = shared.borrow_mut();
+                cancel_press_timer(&mut state);
                 let moved = ((x - state.down_x).powi(2) + (y - state.down_y).powi(2)).sqrt();
-                state.dragging && moved < 6.0 && performance_now() - state.down_time < 450.0
+                let click = state.dragging
+                    && moved < 6.0
+                    && performance_now() - state.down_time < 450.0;
+                let long_press = state.long_press;
+                state.dragging = false;
+                state.long_press = false;
+                (click, long_press)
             };
+            if long_press {
+                shared.borrow_mut().mark_overlay();
+                event.prevent_default();
+                return;
+            }
             if click {
                 let state = shared.borrow();
                 let passage = state.layout.along_of(x, y);
@@ -2440,7 +2539,6 @@ fn attach_input(
                     send(Command::Focus(Some((start, end))));
                 }
             }
-            shared.borrow_mut().dragging = false;
             event.prevent_default();
         })
     };
@@ -2453,7 +2551,35 @@ fn attach_input(
             let x = event.client_x() as f32 - rect.left() as f32;
             let y = event.client_y() as f32 - rect.top() as f32;
             let mut state = shared.borrow_mut();
+            if state.long_press {
+                let along = state.layout.along_of(x, y);
+                let inside = along >= state.layout.axis_start && along <= state.layout.axis_end;
+                let verse = state.layout.along_to_verse(state.view, along);
+                let ppv = state.layout.pixels_per_verse(state.view);
+                state.hover = if inside {
+                    passage_at(verse, ppv, &versification)
+                } else {
+                    None
+                };
+                state.hover_verse = if inside {
+                    Some((verse.floor() as u32).min(TOTAL_VERSES - 1))
+                } else {
+                    None
+                };
+                state.last_x = x;
+                state.last_y = y;
+                state.mark_overlay();
+                return;
+            }
             if state.dragging {
+                if state.press_timer.is_some() {
+                    let moved = ((x - state.down_x).powi(2)
+                        + (y - state.down_y).powi(2))
+                    .sqrt();
+                    if moved > 7.0 {
+                        cancel_press_timer(&mut state);
+                    }
+                }
                 let delta = if state.layout.vertical {
                     y - state.last_y
                 } else {
@@ -2462,6 +2588,11 @@ fn attach_input(
                 state.last_x = x;
                 state.last_y = y;
                 state.pan_px(delta, performance_now());
+                return;
+            }
+            if event.pointer_type() == "mouse" {
+                state.touch_hover = false;
+            } else if state.touch_hover {
                 return;
             }
             let along = state.layout.along_of(x, y);
@@ -2473,7 +2604,6 @@ fn attach_input(
             } else {
                 None
             };
-            let changed = passage != state.hover;
             state.hover = passage;
             state.hover_verse = if inside {
                 Some((verse.floor() as u32).min(TOTAL_VERSES - 1))
@@ -2483,17 +2613,39 @@ fn attach_input(
             state.mark_overlay();
             state.last_x = x;
             state.last_y = y;
-            let _ = changed;
         })
     };
     let leave = {
         let shared = shared.clone();
-        Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
+        Closure::<dyn FnMut(PointerEvent)>::new(move |event: PointerEvent| {
             let mut state = shared.borrow_mut();
-            state.hover = None;
-            state.hover_verse = None;
-            state.mark_overlay();
+            cancel_press_timer(&mut state);
+            if event.pointer_type() == "mouse" {
+                state.hover = None;
+                state.hover_verse = None;
+                state.mark_overlay();
+            }
         })
+    };
+    let cancel = {
+        let shared = shared.clone();
+        Closure::<dyn FnMut(PointerEvent)>::new(move |_event: PointerEvent| {
+            let mut state = shared.borrow_mut();
+            cancel_press_timer(&mut state);
+            state.dragging = false;
+            state.long_press = false;
+        })
+    };
+    let context = {
+        let canvas = canvas.clone();
+        let handler = Closure::<dyn FnMut(web_sys::MouseEvent)>::new(
+            move |event: web_sys::MouseEvent| {
+                event.prevent_default();
+            },
+        );
+        let _ = canvas
+            .add_event_listener_with_callback("contextmenu", handler.as_ref().unchecked_ref());
+        handler
     };
     let wheel = {
         let shared = shared.clone();
@@ -2526,12 +2678,15 @@ fn attach_input(
     let _ = canvas.add_event_listener_with_callback("pointermove", moved.as_ref().unchecked_ref());
     let _ = window.add_event_listener_with_callback("pointerup", up.as_ref().unchecked_ref());
     let _ = canvas.add_event_listener_with_callback("pointerleave", leave.as_ref().unchecked_ref());
+    let _ = canvas.add_event_listener_with_callback("pointercancel", cancel.as_ref().unchecked_ref());
     let _ = canvas.add_event_listener_with_callback("wheel", wheel.as_ref().unchecked_ref());
     let _ = window.add_event_listener_with_callback("resize", resize.as_ref().unchecked_ref());
     down.forget();
     up.forget();
     moved.forget();
     leave.forget();
+    cancel.forget();
+    context.forget();
     wheel.forget();
     resize.forget();
 }
@@ -2757,6 +2912,9 @@ fn attach_chrome(shared: &Rc<RefCell<Shared>>) {
                     label.set_text_content(Some(&MIN_VOTES.to_string()));
                 }
             }
+            if let Some(window) = web_sys::window() {
+                i18n::sync_selects(&window);
+            }
             set_filters_active(false);
             send(Command::Filters(FilterState::default()));
             send(Command::Votes(MIN_VOTES));
@@ -2768,6 +2926,7 @@ fn attach_chrome(shared: &Rc<RefCell<Shared>>) {
     attach_share(&window);
     attach_translation_select(&window);
     i18n::attach_language_select(&window);
+    i18n::sync_selects(&window);
     if let Some(search) = document
         .get_element_by_id("search")
         .and_then(|node| node.dyn_into::<HtmlInputElement>().ok())

@@ -63,6 +63,7 @@
     <link data-trunk rel="copy-dir" href="threads" />
     <link data-trunk rel="copy-file" href="public/manifest.webmanifest" />
     <link data-trunk rel="copy-file" href="public/sw.js" />
+    <link data-trunk rel="copy-file" href="public/ui.js" />
     <link data-trunk rel="copy-file" href="public/robots.txt" />
     <link data-trunk rel="copy-file" href="public/sitemap.xml" />
     <link data-trunk rel="copy-file" href="public/og-image.png" />
@@ -74,6 +75,7 @@
         });
       }
     </script>
+    <script src="./ui.js" defer></script>
     <style>
       :root {
         --bg: #0b0c0e;
@@ -270,6 +272,214 @@
       .translation { max-width: 118px; }
       .lang-select { width: 62px; padding-right: 25px; background-position: right 8px center; }
 
+      /* ---------- themed dropdowns ---------- */
+      .cselect { position: relative; display: inline-flex; min-width: 0; vertical-align: middle; }
+      .cselect.translation { max-width: 118px; }
+      .cselect.lang-select { width: 66px; padding: 0; flex: 0 0 auto; }
+      .cselect-native {
+        position: absolute !important;
+        width: 1px !important;
+        height: 1px !important;
+        margin: -1px !important;
+        padding: 0 !important;
+        overflow: hidden !important;
+        clip: rect(0 0 0 0) !important;
+        white-space: nowrap !important;
+        border: 0 !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
+      .cselect-trigger {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        width: 100%;
+        height: 34px;
+        min-width: 0;
+        padding: 0 9px 0 11px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background-color: rgba(255, 255, 255, 0.022);
+        background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 72%);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+        color: var(--text-soft);
+        font-size: 12px;
+        text-align: left;
+        cursor: pointer;
+        transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease,
+          box-shadow 140ms ease;
+      }
+      .cselect-trigger:hover {
+        border-color: var(--line-strong);
+        background-color: rgba(255, 255, 255, 0.055);
+        color: var(--text);
+      }
+      .cselect-trigger[aria-expanded="true"] {
+        border-color: rgba(228, 179, 99, 0.55);
+        background-color: rgba(228, 179, 99, 0.08);
+        box-shadow: 0 0 0 3px rgba(228, 179, 99, 0.09),
+          inset 0 1px 0 rgba(255, 255, 255, 0.06);
+        color: var(--text);
+      }
+      .cselect-value {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .cselect-chevron {
+        flex: 0 0 auto;
+        width: 10px;
+        height: 6px;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='m1 1 4 4 4-4' fill='none' stroke='%23969b9f' stroke-width='1.4' stroke-linecap='round'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: center;
+        opacity: 0.85;
+        transition: transform 160ms ease, opacity 160ms ease;
+      }
+      .cselect-trigger:hover .cselect-chevron { opacity: 1; }
+      .cselect-trigger[aria-expanded="true"] .cselect-chevron {
+        transform: rotate(180deg);
+        opacity: 1;
+      }
+      .lang-select .cselect-trigger { padding: 0 7px 0 10px; }
+      .lang-select .cselect-value {
+        font-size: 11px;
+        letter-spacing: 0.04em;
+      }
+      .filter-field .cselect { width: 100%; }
+
+      .cselect-layer { position: fixed; inset: 0; z-index: 90; }
+      .cselect-backdrop { position: absolute; inset: 0; background: transparent; }
+      .cselect-menu {
+        position: absolute;
+        z-index: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        padding: 5px;
+        border: 1px solid var(--line-strong);
+        border-radius: 12px;
+        background: linear-gradient(180deg, rgba(28, 32, 39, 0.985), rgba(16, 19, 24, 0.985));
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(18px);
+        animation: cselect-pop 130ms ease-out;
+      }
+      .cselect-options {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding: 1px;
+        scrollbar-width: thin;
+        scrollbar-color: var(--surface-3) transparent;
+      }
+      .cselect-options::-webkit-scrollbar { width: 8px; }
+      .cselect-options::-webkit-scrollbar-track { background: transparent; }
+      .cselect-options::-webkit-scrollbar-thumb {
+        border: 2px solid transparent;
+        border-radius: 99px;
+        background: var(--surface-3);
+        background-clip: content-box;
+      }
+      .cselect-option {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        min-height: 31px;
+        padding: 0 9px;
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        color: var(--text-soft);
+        font: inherit;
+        font-size: 12.5px;
+        text-align: left;
+        cursor: pointer;
+      }
+      .cselect-option:hover,
+      .cselect-option.is-active {
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--text);
+      }
+      .cselect-option.is-selected { background: var(--accent-soft); color: var(--accent); }
+      .cselect-option:disabled { opacity: 0.4; cursor: default; }
+      .cselect-option-label {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .cselect-check {
+        position: relative;
+        flex: 0 0 auto;
+        width: 12px;
+        height: 12px;
+        opacity: 0;
+      }
+      .cselect-option.is-selected .cselect-check { opacity: 1; }
+      .cselect-check::after {
+        content: "";
+        position: absolute;
+        left: 3px;
+        top: 0;
+        width: 5px;
+        height: 9px;
+        border-right: 1.6px solid var(--accent);
+        border-bottom: 1.6px solid var(--accent);
+        transform: rotate(42deg);
+      }
+      .cselect-group {
+        padding: 8px 9px 4px;
+        color: var(--faint);
+        font-size: 8.5px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+      .cselect-group:not(:first-child) {
+        margin-top: 4px;
+        border-top: 1px solid var(--line);
+      }
+      .cselect-sheet-head { display: none; }
+      .cselect-sheet-title {
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+      }
+      .cselect-sheet-close {
+        display: grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border: 1px solid var(--line);
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--muted);
+        font-size: 18px;
+        line-height: 1;
+        cursor: pointer;
+      }
+      .cselect-sheet-close:hover {
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--text);
+      }
+      @keyframes cselect-pop {
+        from { opacity: 0; transform: translateY(-4px) scale(0.985); }
+        to { opacity: 1; transform: none; }
+      }
+      @keyframes cselect-sheet-in {
+        from { opacity: 0; transform: translateY(20px); }
+        to { opacity: 1; transform: none; }
+      }
+
       .icon-button, .filters-toggle {
         display: inline-flex;
         align-items: center;
@@ -339,6 +549,9 @@
           radial-gradient(700px 420px at 50% 110%, rgba(255, 255, 255, 0.022), transparent 70%),
           var(--bg-elev);
         touch-action: none;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
       }
       .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
       #arcs { z-index: 1; }
@@ -479,6 +692,33 @@
       }
       .tooltip strong { color: var(--text); font-weight: 600; }
       .tooltip span { color: var(--muted); font-size: 10px; }
+      .touch-hint { display: none; }
+      @media (hover: none) and (pointer: coarse) {
+        .touch-hint {
+          position: absolute;
+          z-index: 5;
+          left: 50%;
+          bottom: 18px;
+          display: inline-flex;
+          align-items: center;
+          padding: 7px 13px;
+          border: 1px solid var(--line);
+          border-radius: 999px;
+          background: rgba(18, 21, 26, 0.82);
+          box-shadow: 0 10px 28px rgba(0, 0, 0, 0.3);
+          backdrop-filter: blur(10px);
+          color: var(--muted);
+          font-size: 10px;
+          letter-spacing: 0.02em;
+          white-space: nowrap;
+          pointer-events: none;
+          transform: translateX(-50%);
+          animation: touch-hint-fade 700ms 6s forwards;
+        }
+      }
+      @keyframes touch-hint-fade {
+        to { opacity: 0; visibility: hidden; }
+      }
 
       /* ---------- filters popover ---------- */
       .filters {
@@ -1149,6 +1389,7 @@
         .search { order: 10; flex: 1 1 100%; }
         .search input { height: 34px; font-size: 12px; }
         .translation { height: 32px; font-size: 11px; }
+        .cselect-trigger { height: 32px; font-size: 11px; }
         .icon-button, .filters-toggle { height: 32px; }
         .icon-button { width: 32px; }
         .filters-toggle { width: 32px; padding: 0; }
@@ -1192,6 +1433,52 @@
         .topbar h1 { display: none; }
         .translation { max-width: 98px; }
         .lang-select { width: 58px; }
+        .cselect.translation { max-width: 104px; }
+        .cselect.lang-select { width: 60px; }
+        .cselect.lang-select .cselect-trigger { padding: 0 6px 0 9px; }
+
+        .cselect-layer.is-sheet .cselect-backdrop {
+          background: rgba(0, 0, 0, 0.55);
+          backdrop-filter: blur(2px);
+        }
+        .cselect-menu.is-sheet {
+          left: 0 !important;
+          right: 0;
+          top: auto !important;
+          bottom: 0;
+          width: auto !important;
+          max-height: min(74vh, 620px) !important;
+          border-bottom: 0;
+          border-radius: 18px 18px 0 0;
+          padding: 6px 8px calc(10px + env(safe-area-inset-bottom));
+          animation: cselect-sheet-in 190ms cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+        .cselect-menu.is-sheet .cselect-sheet-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin: 0 2px 6px;
+          padding: 4px 4px 9px;
+          border-bottom: 1px solid var(--line);
+        }
+        .cselect-menu.is-sheet .cselect-option {
+          min-height: 46px;
+          padding: 0 12px;
+          border-radius: 9px;
+          font-size: 14px;
+        }
+        .cselect-menu.is-sheet .cselect-option + .cselect-option {
+          margin-top: 1px;
+        }
+        .cselect-menu.is-sheet .cselect-group {
+          padding: 11px 12px 5px;
+          font-size: 9px;
+        }
+        .cselect-menu.is-sheet .cselect-check {
+          width: 14px;
+          height: 14px;
+        }
       }
       @media (prefers-reduced-motion: reduce) {
         *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }

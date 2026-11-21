@@ -1272,6 +1272,7 @@ pub async fn run(xrefs: XrefData, text: TranslationText) -> Result<(), JsValue> 
     crate::render::attach_translation_select(&window);
     crate::render::attach_share(&window);
     i18n::attach_language_select(&window);
+    i18n::sync_selects(&window);
     let threads = Threads::new(&xrefs, text, Versification::kjv())?;
     let requested = crate::render::query_param(&window, "ref")
         .and_then(|reference| crate::render::parse_reference(&reference, &versification));

@@ -1,8 +1,9 @@
 /* Aletheia cross-reference explorer: offline shell + runtime cache. */
-const CACHE = "aletheia-xrefs-v3";
+const CACHE = "aletheia-xrefs-v4";
 const SHELL = [
   "./",
   "./manifest.webmanifest",
+  "./ui.js",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/icon-maskable-512.png",

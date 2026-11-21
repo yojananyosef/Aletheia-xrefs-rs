@@ -230,6 +230,14 @@ fn decode_component(value: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// Ask the progressive-enhancement layer to refresh its themed dropdowns
+/// after Rust changes a native select value programmatically.
+pub fn sync_selects(window: &web_sys::Window) {
+    if let Ok(event) = web_sys::Event::new("aletheia:sync-selects") {
+        let _ = window.dispatch_event(&event);
+    }
+}
+
 pub fn apply_document_language(window: &web_sys::Window) {
     let lang = lang_of(window);
     if let Some(document) = window.document() {
