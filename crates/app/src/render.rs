@@ -189,6 +189,8 @@ impl LemmaFilter {
 pub enum Command {
     Votes(i16),
     Filters(FilterState),
+    /// Jump to the first chapter of a book (0-based canonical index).
+    Book(usize),
     Focus(Option<(u32, u32)>),
     Search(String),
     ShowOriginal,
@@ -366,6 +368,12 @@ fn votes_from_url(window: &web_sys::Window) -> i16 {
         .unwrap_or(MIN_VOTES)
 }
 
+pub(crate) fn book_index(id: &str) -> Option<usize> {
+    tables::BOOK_IDS
+        .iter()
+        .position(|candidate| *candidate == id)
+}
+
 fn filters_from_url(window: &web_sys::Window) -> FilterState {
     FilterState {
         testament: match i18n::query_param(window, "testament").as_deref() {
@@ -377,11 +385,7 @@ fn filters_from_url(window: &web_sys::Window) -> FilterState {
             .and_then(|value| value.parse::<u8>().ok())
             .filter(|genre| usize::from(*genre) < tables::GENRE_NAMES.len()),
         book: i18n::query_param(window, "book")
-            .and_then(|value| {
-                tables::BOOK_IDS
-                    .iter()
-                    .position(|candidate| *candidate == value)
-            })
+            .and_then(|value| book_index(&value))
             .map(|book| book as u8),
     }
 }
@@ -1321,6 +1325,19 @@ pub async fn run() -> Result<(), JsValue> {
                     force_rebuild = true;
                     let votes = shared.borrow().votes;
                     update_filter_url(&window, filters, votes);
+                }
+                Command::Book(book) => {
+                    if let Some((start, end)) = versification.chapter_range(book, 1) {
+                        apply_focus(&shared, start, end, &versification);
+                        open_panel(
+                            &shared,
+                            &links_all,
+                            &versification,
+                            &text,
+                            shared.borrow().votes,
+                        );
+                        set_status("");
+                    }
                 }
                 Command::Focus(passage) => {
                     if let Some((start, end)) = passage {
@@ -2723,6 +2740,35 @@ pub(crate) fn attach_translation_select(window: &web_sys::Window) {
     handler.forget();
 }
 
+fn attach_book_jump(window: &web_sys::Window) {
+    let Some(select) = window
+        .document()
+        .and_then(|document| document.get_element_by_id("book-jump"))
+        .and_then(|node| node.dyn_into::<web_sys::HtmlSelectElement>().ok())
+    else {
+        return;
+    };
+    let handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+        let Some(target) = event
+            .target()
+            .and_then(|target| target.dyn_into::<web_sys::HtmlSelectElement>().ok())
+        else {
+            return;
+        };
+        if let Some(book) = book_index(&target.value()) {
+            send(Command::Book(book));
+        }
+        // This is a jump menu, not a persistent filter: return it to its
+        // placeholder so choosing the same book again still navigates.
+        target.set_value("");
+        if let Some(window) = web_sys::window() {
+            i18n::sync_selects(&window);
+        }
+    });
+    let _ = select.add_event_listener_with_callback("change", handler.as_ref().unchecked_ref());
+    handler.forget();
+}
+
 fn set_range_progress(range: &HtmlInputElement, votes: i16) {
     let _ = range.set_attribute(
         "style",
@@ -2758,10 +2804,7 @@ fn read_filters(document: &web_sys::Document) -> FilterState {
             .parse::<u8>()
             .ok()
             .filter(|genre| usize::from(*genre) < tables::GENRE_NAMES.len()),
-        book: tables::BOOK_IDS
-            .iter()
-            .position(|candidate| *candidate == value("filter-book"))
-            .map(|book| book as u8),
+        book: book_index(&value("filter-book")).map(|book| book as u8),
     }
 }
 
@@ -2932,6 +2975,7 @@ fn attach_chrome(shared: &Rc<RefCell<Shared>>) {
 
     attach_share(&window);
     attach_translation_select(&window);
+    attach_book_jump(&window);
     i18n::attach_language_select(&window);
     i18n::sync_selects(&window);
     if let Some(search) = document

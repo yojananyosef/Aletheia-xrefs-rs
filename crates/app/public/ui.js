@@ -179,7 +179,9 @@
     const rect = trigger.getBoundingClientRect();
     const margin = 8;
     const gap = 6;
-    const width = Math.max(rect.width, activeSelect.id === "language" ? 118 : 166);
+    const minWidth =
+      activeSelect.id === "language" ? 118 : activeSelect.id === "book-jump" ? 232 : 166;
+    const width = Math.max(rect.width, minWidth);
     menu.style.width = `${width}px`;
     const maxHeight = Math.max(160, Math.min(340, window.innerHeight - margin * 2));
     menu.style.maxHeight = `${maxHeight}px`;
@@ -366,7 +368,7 @@
 
     const wrapper = document.createElement("div");
     wrapper.className = "cselect";
-    for (const name of ["translation", "lang-select"]) {
+    for (const name of ["translation", "lang-select", "book-jump"]) {
       if (select.classList.contains(name)) wrapper.classList.add(name);
     }
 

@@ -46,6 +46,19 @@ fn App() -> impl IntoView {
                     <option value=i18n::TRANSLATIONS[0].id>{i18n::TRANSLATIONS[0].label}</option>
                     <option value=i18n::TRANSLATIONS[1].id>{i18n::TRANSLATIONS[1].label}</option>
                 </select>
+                <select class="book-jump" id="book-jump" aria-label=i18n::tr(lang, "Ir a un libro", "Go to a book")>
+                    <option value="">{i18n::tr(lang, "Libro…", "Book…")}</option>
+                    <optgroup label=i18n::tr(lang, "Antiguo Testamento", "Old Testament")>
+                        {(0..39).map(|book| view! {
+                            <option value=tables::BOOK_IDS[book]>{i18n::book_name(lang, book)}</option>
+                        }).collect_view()}
+                    </optgroup>
+                    <optgroup label=i18n::tr(lang, "Nuevo Testamento", "New Testament")>
+                        {(39..66).map(|book| view! {
+                            <option value=tables::BOOK_IDS[book]>{i18n::book_name(lang, book)}</option>
+                        }).collect_view()}
+                    </optgroup>
+                </select>
                 <select class="translation lang-select" id="language" aria-label=i18n::tr(lang, "Idioma de la aplicación", "Application language")>
                     <option value="es">"ES"</option>
                     <option value="en">"EN"</option>

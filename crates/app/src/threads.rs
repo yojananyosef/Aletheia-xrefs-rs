@@ -274,6 +274,41 @@ impl Threads {
             let _ = button.add_event_listener_with_callback("click", handler.as_ref().unchecked_ref());
             handler.forget();
         }
+        if let Some(select) = document
+            .get_element_by_id("book-jump")
+            .and_then(|node| node.dyn_into::<web_sys::HtmlSelectElement>().ok())
+        {
+            let this = self.clone();
+            let handler = Closure::<dyn FnMut(web_sys::Event)>::new(
+                move |_event: web_sys::Event| {
+                    let Some(window) = web_sys::window() else {
+                        return;
+                    };
+                    let Some(select) = window
+                        .document()
+                        .and_then(|document| document.get_element_by_id("book-jump"))
+                        .and_then(|node| node.dyn_into::<web_sys::HtmlSelectElement>().ok())
+                    else {
+                        return;
+                    };
+                    let first_verse = crate::render::book_index(&select.value()).and_then(|book| {
+                        this.versification
+                            .chapter_range(book, 1)
+                            .map(|(start, _)| start)
+                    });
+                    if let Some(first_verse) = first_verse {
+                        this.go_to_verse(first_verse);
+                    }
+                    // Reset the jump menu so it can be used again for the
+                    // same book.
+                    select.set_value("");
+                    i18n::sync_selects(&window);
+                },
+            );
+            let _ =
+                select.add_event_listener_with_callback("change", handler.as_ref().unchecked_ref());
+            handler.forget();
+        }
         // Hover and click on verses (event delegation: chapters replace the DOM).
         let this = self.clone();
         let hover = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(move |event: web_sys::PointerEvent| {

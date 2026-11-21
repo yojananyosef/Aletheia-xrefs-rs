@@ -270,11 +270,13 @@
       select:focus { border-color: rgba(228, 179, 99, 0.55); box-shadow: 0 0 0 3px rgba(228, 179, 99, 0.1); }
       select option, select optgroup { background: var(--surface); color: var(--text); }
       .translation { max-width: 118px; }
+      .book-jump { width: 124px; }
       .lang-select { width: 62px; padding-right: 25px; background-position: right 8px center; }
 
       /* ---------- themed dropdowns ---------- */
       .cselect { position: relative; display: inline-flex; min-width: 0; vertical-align: middle; }
       .cselect.translation { max-width: 118px; }
+      .cselect.book-jump { width: 124px; flex: 0 0 auto; }
       .cselect.lang-select { width: 66px; padding: 0; flex: 0 0 auto; }
       .cselect-native {
         position: absolute !important;
@@ -1347,6 +1349,12 @@
       @media (max-width: 1180px) {
         .legend { display: none; }
         .hints { display: none; }
+        .topbar { gap: 8px; padding: 0 12px; }
+        .translation { max-width: 104px; }
+        .cselect.translation { max-width: 104px; }
+        .book-jump, .cselect.book-jump { width: 112px; }
+        .filters-toggle { width: 34px; padding: 0; }
+        .filters-toggle .button-label { display: none; }
         .stats { max-width: calc(100% - 28px); }
         .lemma-banner {
           left: 16px;
@@ -1355,8 +1363,14 @@
         }
       }
       @media (max-width: 980px) {
-        .topbar { gap: 8px; padding: 0 12px; }
+        .topbar { gap: 7px; padding: 0 10px; }
+        .brand-text h1 { display: none; }
         .views { margin-left: 0; }
+        .translation { max-width: 104px; }
+        .cselect.translation { max-width: 104px; }
+        .book-jump, .cselect.book-jump { width: 112px; }
+        .lang-select { width: 58px; }
+        .cselect.lang-select { width: 60px; }
         .panel {
           position: absolute;
           top: 12px;
@@ -1388,7 +1402,10 @@
         .topbar h1 { font-size: 14px; }
         .search { order: 10; flex: 1 1 100%; }
         .search input { height: 34px; font-size: 12px; }
-        .translation { height: 32px; font-size: 11px; }
+        .translation { height: 32px; font-size: 11px; max-width: 100px; }
+        .cselect.translation { max-width: 100px; }
+        .book-jump { height: 32px; font-size: 11px; width: 108px; }
+        .cselect.book-jump { width: 108px; }
         .cselect-trigger { height: 32px; font-size: 11px; }
         .icon-button, .filters-toggle { height: 32px; }
         .icon-button { width: 32px; }
@@ -1431,10 +1448,13 @@
       @media (max-width: 560px) {
         .brand-text { display: none; }
         .topbar h1 { display: none; }
+        .search { flex: 1 1 auto; min-width: 90px; }
         .translation { max-width: 98px; }
-        .lang-select { width: 58px; }
-        .cselect.translation { max-width: 104px; }
-        .cselect.lang-select { width: 60px; }
+        .book-jump { width: 96px; }
+        .cselect.book-jump { width: 96px; }
+        .lang-select { width: 58px; order: 9; }
+        .cselect.lang-select { width: 60px; order: 9; }
+        .cselect.translation { max-width: 100px; }
         .cselect.lang-select .cselect-trigger { padding: 0 6px 0 9px; }
 
         .cselect-layer.is-sheet .cselect-backdrop {
@@ -1479,6 +1499,12 @@
           width: 14px;
           height: 14px;
         }
+      }
+      @media (max-width: 340px) {
+        .brand { display: none; }
+        .translation { max-width: 96px; }
+        .cselect.translation { max-width: 96px; }
+        .book-jump, .cselect.book-jump { width: 88px; }
       }
       @media (prefers-reduced-motion: reduce) {
         *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
