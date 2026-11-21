@@ -32,6 +32,10 @@ pub struct Layout {
 
 const EDGE_MARGIN: f32 = 16.0;
 const VERTICAL_TOP_MARGIN: f32 = 48.0;
+/// Horizontal arcs must clear the stats/hints overlays, otherwise the widest
+/// spans are flattened against the top edge and their glow is clipped on wide
+/// desktop windows.
+const HORIZONTAL_TOP_MARGIN: f32 = 64.0;
 const HORIZONTAL_LABEL_BAND: f32 = 58.0;
 const VERTICAL_LABEL_BAND: f32 = 64.0;
 
@@ -57,7 +61,7 @@ impl Layout {
                 axis_start: EDGE_MARGIN * 2.0,
                 axis_end: width - EDGE_MARGIN * 2.0,
                 baseline,
-                max_height: (baseline - EDGE_MARGIN).max(0.0),
+                max_height: (baseline - HORIZONTAL_TOP_MARGIN).max(0.0),
             }
         }
     }
