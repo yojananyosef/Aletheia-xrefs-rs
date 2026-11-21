@@ -13,7 +13,7 @@ struct Uniforms {
   reveal: f32,
   width: f32,
   ribbon_alpha: f32,
-  pad1: f32,
+  height_scale: f32,
   pad2: f32,
   pad3: f32,
 };
@@ -56,7 +56,7 @@ fn vs_main(in: VsIn) -> VsOut {
   let a = along(in.a);
   let b = along(in.b);
   let radius = 0.5 * (b - a);
-  let height = min(abs(radius), u.max_height);
+  let height = abs(radius) * u.height_scale;
   let local = vec2<f32>(0.5 * (a + b) - radius * cos_t, height * sin_t);
 
   // toScreen: horizontal axes lift the arc up, vertical axes push it right.

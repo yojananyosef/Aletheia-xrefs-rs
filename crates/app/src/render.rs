@@ -109,7 +109,8 @@ struct ArcUniforms {
     /// Ribbon width in CSS px and its alpha (hover/focus highlights).
     width: f32,
     ribbon_alpha: f32,
-    pad1: f32,
+    /// Uniform vertical compression so no arc ever hits a hard ceiling.
+    height_scale: f32,
     pad2: f32,
     pad3: f32,
 }
@@ -1694,6 +1695,12 @@ pub async fn run() -> Result<(), JsValue> {
             let state = shared.borrow();
             let axis = [state.layout.axis_start, state.layout.axis_end];
             let along_scale = (axis[1] - axis[0]) / (view.1 - view.0).max(f32::EPSILON);
+            let half_span = 0.5 * (axis[1] - axis[0]);
+            let height_scale = if half_span > 1.0 {
+                (state.layout.max_height / half_span).min(1.0)
+            } else {
+                1.0
+            };
             let mut arc_uniforms = ArcUniforms {
                 clip_scale: [2.0 / state.width, -2.0 / state.height],
                 clip_offset: [-1.0, 1.0],
@@ -1708,7 +1715,7 @@ pub async fn run() -> Result<(), JsValue> {
                 reveal: reveal as f32,
                 width: if focus.is_some() { 1.9 } else { 1.6 },
                 ribbon_alpha: if focus.is_some() { 0.95 } else { 0.85 },
-                pad1: 0.0,
+                height_scale,
                 pad2: 0.0,
                 pad3: 0.0,
             };

@@ -15,7 +15,7 @@ struct Uniforms {
   reveal: f32,
   width: f32,
   ribbon_alpha: f32,
-  pad1: f32,
+  height_scale: f32,
   pad2: f32,
 };
 
@@ -44,7 +44,7 @@ fn vs_main(in: VsIn) -> VsOut {
   let a = u.axis.x + (in.a - u.view.x) * u.along_scale;
   let b = u.axis.x + (in.b - u.view.x) * u.along_scale;
   let radius = 0.5 * (b - a);
-  let height = min(abs(radius), u.max_height);
+  let height = abs(radius) * u.height_scale;
   let point_local = vec2<f32>(0.5 * (a + b) - radius * in.cos_t, height * in.sin_t);
   let tangent_local = vec2<f32>(radius * in.sin_t, height * in.cos_t);
 
