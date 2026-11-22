@@ -19,21 +19,28 @@ automático a WebGL2) para el diagrama de arcos.
       verticales.
 - [x] LOD por tramo, *culling* por ventana visible y render bajo demanda.
 - [x] Eje con libros, capítulos, géneros y vista general; tooltips.
+- [x] Escala cronológica por defecto: color por fecha aproximada de composición
+      (no por la fecha de los hechos narrados), regla de años bajo el eje,
+      leyenda plegable y tabla completa en «Acerca de». El modo por género sigue
+      disponible en los filtros o con `?measure=genre`.
+- [x] Página «Acerca de» con metodología, fuentes, licencias y las fechas de los
+      66 libros; la atribución legal ya no ocupa el pie del diagrama.
 - [x] Búsqueda de referencias, panel de referencias, filtro de votos y URL.
-- [x] Vista de Hilos con columna vertebral, contadores por versículo y
-      dirección (remite a / citado por / ambos).
+- [x] Vista de Hilos con columna vertebral, contadores por versículo,
+      dirección (remite a / citado por / ambos), cabecera fija opaca y selector
+      de capítulo con el mismo menú temático del resto del sitio.
 - [x] Texto bíblico en español (Platense) e inglés (ASV), con selector de
       idioma y de versión; el idioma elige la traducción por defecto.
 - [x] Filtros por testamento, género y libro (aplicados al versículo de
       origen), combinables con el umbral de votos y persistidos en la URL.
-- [x] Selectores de versión, idioma y filtros con menú temático propio y hoja
-      inferior en móvil; salto directo a cualquier libro desde la barra superior
-      (abre su primer capítulo en la vista actual) y, en el diagrama, pulsación
-      larga para previsualizar un versículo y sus referencias.
+- [x] Selectores de versión, idioma, capítulo y filtros con menú temático propio
+      y hoja inferior en móvil; salto directo a cualquier libro desde la barra
+      superior (abre su primer capítulo en la vista actual) y, en el diagrama,
+      pulsación larga para previsualizar un versículo y sus referencias.
 - [x] Compartir el enlace actual con Web Share API y copia al portapapeles.
 - [x] PWA instalable: manifest, iconos, *service worker* y caché offline.
 - [x] SEO técnico: metadatos, Open Graph/Twitter, JSON-LD, `robots.txt`,
-      `sitemap.xml` e imagen social.
+      `sitemap.xml` e imagen social. La página «Acerca de» también está indexada.
 - [x] Texto original palabra por palabra: hebreo/arameo (TAHOT, base WLC) y
       griego (TAGNT, base SBLGNT–NA28), con número Strong, morfología y léxico
       breve (TBESH/TBESG). Se carga bajo demanda (5,6 MB gzip) y está disponible
@@ -74,6 +81,9 @@ cargo run -p bible-data -- verify crates/app/data
 cd crates/app
 trunk serve
 ```
+
+La página «Acerca de» vive en `crates/app/about/index.html`; el hook
+`post_build` de `Trunk.toml` la copia a `dist/about/`.
 
 `data/raw/cross_references.txt` se obtiene descomprimiendo
 `openbible-cross-references.zip`; `data/raw/spaplatense.osis.xml` es el OSIS de
@@ -158,5 +168,8 @@ cambia); `?perf=1` muestra fps, milisegundos por cuadro e instancias visibles.
   (CC BY 4.0) y NA27/28; TBESH/TBESG se basan en BDB y Abbott-Smith.
 - Reina-Valera 1909 (USFX), eBible.org: dominio público. Se usa solo para
   alinear glosas y acepciones españolas.
+- *Comentario Bíblico Adventista del Séptimo Día*, ed. 1980: referencia
+  bibliográfica para las fechas aproximadas de composición. No se redistribuye
+  su texto; solo se citan rangos de años.
 
 Las licencias anteriores corresponden a los datos; el código es original.

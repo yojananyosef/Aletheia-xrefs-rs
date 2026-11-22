@@ -434,6 +434,11 @@
     }
   });
   window.addEventListener("aletheia:sync-selects", syncAll);
+  // The threads header recreates its chapter selector on every chapter change.
+  window.addEventListener("aletheia:enhance-selects", () => {
+    enhanceAll();
+    syncAll();
+  });
 
   const start = () => {
     enhanceAll();

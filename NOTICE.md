@@ -35,3 +35,13 @@ coordinate system; its text is not bundled. The Spanish glosses and usage
 senses come from the RV1909 alignment; STEPBible's full lexical articles are
 shown in their original English, while the interface and morphology
 descriptions are localized.
+
+
+## Composition dates
+
+The composition-date scale (shown by default) and the table on the About page
+are an approximate historical aid based on the introductions and chronology of the
+*Seventh-day Adventist Bible Commentary* (1980 edition),
+<https://archive.org/details/SdaBibleCommentary1980>. The commentary's text is
+not redistributed; only approximate year ranges are cited. The dates are not
+part of the biblical text and are not presented as inspired.

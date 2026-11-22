@@ -234,6 +234,8 @@ struct Shared {
     highlighted: Option<(u32, u32)>,
     votes: i16,
     filters: FilterState,
+    /// Colour the axis by approximate composition date instead of genre.
+    measure_dates: bool,
     last_input: f64,
     original: Option<Rc<WordsData>>,
     original_loading: bool,
@@ -469,9 +471,9 @@ fn update_lemma_banner(shared: &Rc<RefCell<Shared>>) {
     let lang = i18n::lang();
     if let Some(stage) = element("stage") {
         if lemma.is_some() || loading || error.is_some() {
-            let _ = stage.set_class_name("stage lemma-mode");
+            let _ = stage.class_list().add_1("lemma-mode");
         } else {
-            let _ = stage.set_class_name("stage");
+            let _ = stage.class_list().remove_1("lemma-mode");
         }
     }
     if let Some(lemma) = lemma {
@@ -1152,6 +1154,7 @@ pub async fn run() -> Result<(), JsValue> {
     let now = performance_now();
     let initial_votes = votes_from_url(&window);
     let initial_filters = filters_from_url(&window);
+    let initial_measure_dates = query_param(&window, "measure").as_deref() != Some("genre");
     let initial_lemma_key = lemma_key_from_url(&window);
     let (initial_original, initial_lemma, initial_lemma_error) =
         match initial_lemma_key.as_deref() {
@@ -1188,6 +1191,7 @@ pub async fn run() -> Result<(), JsValue> {
         highlighted: None,
         votes: initial_votes,
         filters: initial_filters,
+        measure_dates: initial_measure_dates,
         last_input: now,
         show_original: initial_original.is_some(),
         original: initial_original,
@@ -1878,6 +1882,7 @@ pub async fn run() -> Result<(), JsValue> {
                 &versification,
                 hover,
                 focus,
+                state.measure_dates,
                 state.dpr as f64,
             );
             update_tooltip(&state, &versification, &stats);
@@ -2401,8 +2406,29 @@ fn update_tooltip(state: &Shared, versification: &Versification, stats: &Stats) 
     let label = i18n::format_verse(lang, versification, verse);
     let count = stats.out_counts.get(verse as usize).copied().unwrap_or(0)
         + stats.in_counts.get(verse as usize).copied().unwrap_or(0);
+    let date = if state.measure_dates {
+        (0..tables::BOOK_IDS.len())
+            .find(|book| {
+                versification
+                    .book_range(*book)
+                    .is_some_and(|(start, end)| verse >= start && verse <= end)
+            })
+            .map(|book| i18n::composition_label(lang, book))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let date_line = if date.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<span class=\"tooltip-date\">{} {}</span>",
+            i18n::tr(lang, "Composición:", "Composed"),
+            escape(&date)
+        )
+    };
     tooltip.set_inner_html(&format!(
-        "<strong>{}</strong><span>{} {}</span>",
+        "<strong>{}</strong><span>{} {}</span>{date_line}",
         escape(&label),
         count,
         i18n::tr(lang, "referencias", "references")
@@ -2776,6 +2802,140 @@ fn set_range_progress(range: &HtmlInputElement, votes: i16) {
     );
 }
 
+fn set_measure(shared: &Rc<RefCell<Shared>>, dates: bool) {
+    let changed = {
+        let mut state = shared.borrow_mut();
+        let changed = state.measure_dates != dates;
+        state.measure_dates = dates;
+        if changed {
+            state.overlay_dirty = true;
+        }
+        changed
+    };
+    if !changed {
+        return;
+    }
+    sync_measure_ui(dates);
+    if let Some(window) = web_sys::window() {
+        let url = if dates {
+            i18n::url_with(&window, &[], &["measure"])
+        } else {
+            i18n::url_with(&window, &[("measure", "genre")], &[])
+        };
+        if let Ok(history) = window.history() {
+            let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&url));
+        }
+    }
+}
+
+fn sync_measure_ui(dates: bool) {
+    let lang = i18n::lang();
+    if let Some(label) = element("legend-open-label") {
+        label.set_text_content(Some(i18n::tr(
+            lang,
+            if dates { "Composición" } else { "Leyenda" },
+            if dates { "Composition" } else { "Legend" },
+        )));
+    }
+    if let Some(swatch) = element("legend-open-swatch") {
+        if dates {
+            let _ = swatch.remove_attribute("hidden");
+        } else {
+            let _ = swatch.set_attribute("hidden", "");
+        }
+    }
+    if let Some(legend) = element("legend-genres") {
+        if dates {
+            let _ = legend.set_attribute("hidden", "");
+        } else {
+            let _ = legend.remove_attribute("hidden");
+        }
+    }
+    if let Some(legend) = element("legend-dates") {
+        if dates {
+            let _ = legend.remove_attribute("hidden");
+        } else {
+            let _ = legend.set_attribute("hidden", "");
+        }
+    }
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+        return;
+    };
+    let Ok(nodes) = document.query_selector_all("[data-measure]") else {
+        return;
+    };
+    for index in 0..nodes.length() {
+        let Some(node) = nodes.get(index) else {
+            continue;
+        };
+        let Ok(button) = node.dyn_into::<web_sys::Element>() else {
+            continue;
+        };
+        let active = button.get_attribute("data-measure").as_deref()
+            == Some(if dates { "date" } else { "genre" });
+        let _ = button.set_attribute("aria-pressed", if active { "true" } else { "false" });
+    }
+}
+
+fn attach_legend_toggle() {
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+        return;
+    };
+    let Some(stage) = document.get_element_by_id("stage") else {
+        return;
+    };
+    if let Ok(nodes) = document.query_selector_all(".legend-close") {
+        for index in 0..nodes.length() {
+            let Some(node) = nodes.get(index) else {
+                continue;
+            };
+            let Ok(button) = node.dyn_into::<web_sys::Element>() else {
+                continue;
+            };
+            let stage = stage.clone();
+            let handler = Closure::<dyn FnMut()>::new(move || {
+                let _ = stage.class_list().add_1("legend-collapsed");
+            });
+            let _ =
+                button.add_event_listener_with_callback("click", handler.as_ref().unchecked_ref());
+            handler.forget();
+        }
+    }
+    if let Some(open) = element("legend-open") {
+        let stage = stage.clone();
+        let handler = Closure::<dyn FnMut()>::new(move || {
+            let _ = stage.class_list().remove_1("legend-collapsed");
+        });
+        let _ = open.add_event_listener_with_callback("click", handler.as_ref().unchecked_ref());
+        handler.forget();
+    }
+}
+
+fn attach_measure(shared: &Rc<RefCell<Shared>>) {
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+        return;
+    };
+    let Ok(nodes) = document.query_selector_all("[data-measure]") else {
+        return;
+    };
+    for index in 0..nodes.length() {
+        let Some(node) = nodes.get(index) else {
+            continue;
+        };
+        let Ok(button) = node.dyn_into::<web_sys::Element>() else {
+            continue;
+        };
+        let dates = button.get_attribute("data-measure").as_deref() == Some("date");
+        let shared = shared.clone();
+        let handler = Closure::<dyn FnMut()>::new(move || {
+            set_measure(&shared, dates);
+        });
+        let _ = button.add_event_listener_with_callback("click", handler.as_ref().unchecked_ref());
+        handler.forget();
+    }
+    sync_measure_ui(shared.borrow().measure_dates);
+}
+
 fn set_filters_active(active: bool) {
     if let Some(toggle) = element("filters-toggle") {
         if active {
@@ -2973,6 +3133,8 @@ fn attach_chrome(shared: &Rc<RefCell<Shared>>) {
         handler.forget();
     }
 
+    attach_legend_toggle();
+    attach_measure(shared);
     attach_share(&window);
     attach_translation_select(&window);
     attach_book_jump(&window);

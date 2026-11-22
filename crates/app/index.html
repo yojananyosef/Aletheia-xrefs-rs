@@ -48,6 +48,7 @@
           "Biblia Platense y American Standard Version",
           "Texto original hebreo, arameo y griego en Arcos e Hilos",
           "Léxico Strong, morfología y glosas en español",
+          "Fechas aproximadas de composición de los 66 libros",
           "Filtro por lema y arcos compartidos",
           "Búsqueda por referencia y filtros"
         ],
@@ -61,6 +62,7 @@
     <link data-trunk rel="rust" data-bin="bible-app" data-wasm-opt="0" />
     <link data-trunk rel="copy-dir" href="data" />
     <link data-trunk rel="copy-dir" href="threads" />
+    <link data-trunk rel="copy-dir" href="about" />
     <link data-trunk rel="copy-file" href="public/manifest.webmanifest" />
     <link data-trunk rel="copy-file" href="public/sw.js" />
     <link data-trunk rel="copy-file" href="public/ui.js" />
@@ -571,8 +573,10 @@
         left: 14px;
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 5px 22px;
-        padding: 12px 14px;
+        gap: 5px 18px;
+        width: 320px;
+        min-height: 170px;
+        padding: 12px 32px 12px 14px;
         border: 1px solid var(--line);
         border-radius: 10px;
         background: rgba(13, 15, 18, 0.7);
@@ -590,6 +594,113 @@
       }
       .legend-item { display: flex; align-items: center; gap: 7px; color: var(--text-soft); white-space: nowrap; }
       .legend-item i { display: inline-block; width: 12px; height: 2px; border-radius: 99px; }
+      .legend-close {
+        position: absolute;
+        z-index: 1;
+        top: 7px;
+        right: 7px;
+        display: grid;
+        place-items: center;
+        width: 20px;
+        height: 20px;
+        padding: 0;
+        border: 1px solid transparent;
+        border-radius: 5px;
+        background: transparent;
+        color: var(--faint);
+        font-size: 14px;
+        line-height: 1;
+        cursor: pointer;
+        pointer-events: auto;
+      }
+      .legend-close:hover { background: rgba(255, 255, 255, 0.06); color: var(--text); }
+      .legend-open {
+        position: absolute;
+        z-index: 3;
+        top: 14px;
+        left: 14px;
+        display: none;
+        align-items: center;
+        gap: 7px;
+        height: 28px;
+        padding: 0 10px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(13, 15, 18, 0.84);
+        backdrop-filter: blur(10px);
+        color: var(--muted);
+        font-size: 9px;
+        font-weight: 600;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+        cursor: pointer;
+        pointer-events: auto;
+      }
+      .legend-open:hover { border-color: var(--line-strong); color: var(--text); }
+      .legend-open-swatch {
+        width: 22px;
+        height: 4px;
+        border-radius: 99px;
+        background: linear-gradient(90deg, #5b7cfa 0%, #42b3a5 25%, #c9b458 50%, #e08a55 75%, #d76a86 100%);
+      }
+      .stage.legend-collapsed .legend { display: none !important; }
+      .stage.legend-collapsed .legend-open { display: inline-flex; }
+      .legend-action {
+        grid-column: 1 / -1;
+        justify-self: start;
+        margin-top: 4px;
+        padding: 3px 0 1px;
+        border: 0;
+        background: transparent;
+        color: var(--faint);
+        font-size: 9.5px;
+        letter-spacing: 0.02em;
+        text-align: left;
+        cursor: pointer;
+        pointer-events: auto;
+      }
+      .legend-action:hover { color: var(--accent); }
+      .legend-dates {
+        display: flex;
+        grid-template-columns: none;
+        flex-direction: column;
+        gap: 7px;
+        width: min(320px, calc(100vw - 40px));
+        padding: 12px 32px 11px 14px;
+      }
+      .date-ramp {
+        height: 4px;
+        border-radius: 99px;
+        background: linear-gradient(90deg, #5b7cfa 0%, #42b3a5 25%, #c9b458 50%, #e08a55 75%, #d76a86 100%);
+      }
+      .date-ticks {
+        position: relative;
+        height: 11px;
+        margin-top: -3px;
+        color: var(--faint);
+        font-family: var(--font-mono);
+        font-size: 8px;
+        font-variant-numeric: tabular-nums;
+      }
+      .date-ticks span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+      .date-ticks span:first-child { transform: none; }
+      .date-ticks span:last-child { transform: translateX(-100%); }
+      .legend-note {
+        margin: 1px 0 0;
+        color: var(--muted);
+        font-size: 10px;
+        line-height: 1.5;
+      }
+      .legend-source {
+        align-self: flex-start;
+        color: var(--accent);
+        font-size: 9.5px;
+        text-decoration: none;
+        pointer-events: auto;
+      }
+      .legend-source:hover { text-decoration: underline; text-underline-offset: 2px; }
+      .legend-dates .legend-action { margin-top: 1px; }
+      .about-link { text-decoration: none; }
 
       .stats {
         position: absolute;
@@ -760,6 +871,31 @@
         text-transform: uppercase;
       }
       .filter-field select { width: 100%; height: 34px; }
+      .measure-toggle {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 3px;
+        padding: 3px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: rgba(255, 255, 255, 0.025);
+      }
+      .measure-option {
+        height: 27px;
+        padding: 0 8px;
+        border: 0;
+        border-radius: 5px;
+        background: transparent;
+        color: var(--muted);
+        font-size: 11px;
+        cursor: pointer;
+      }
+      .measure-option:hover { color: var(--text); }
+      .measure-option[aria-pressed="true"] {
+        background: var(--accent-soft);
+        color: var(--accent);
+        box-shadow: 0 0 0 1px rgba(228, 179, 99, 0.18) inset;
+      }
       .filters-divider { height: 1px; margin: 15px 0 13px; background: var(--line); }
       .filters-row { display: flex; align-items: baseline; gap: 6px; color: var(--text-soft); font-size: 12px; }
       .filters output { color: var(--text); font-weight: 600; }
@@ -813,6 +949,14 @@
         cursor: pointer;
       }
       .filters-foot button:hover { background: rgba(255, 255, 255, 0.06); color: var(--text); }
+      .filters-about {
+        display: inline-block;
+        margin-top: 9px;
+        color: var(--faint);
+        font-size: 9.5px;
+        text-decoration: none;
+      }
+      .filters-about:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
 
       /* ---------- reference panel ---------- */
       .panel {
@@ -1113,18 +1257,17 @@
         width: min(42%, 520px);
         min-width: 280px;
         overflow-y: auto;
-        padding: 22px 24px 64px;
+        padding: 0 24px 64px;
         background: linear-gradient(180deg, #13161b, #0e1014);
       }
       .chapter-head {
         position: sticky;
         top: 0;
         z-index: 2;
-        margin: -22px -24px 20px;
-        padding: 17px 24px 11px;
+        margin: 0 -24px 20px;
+        padding: 22px 24px 12px;
         border-bottom: 1px solid var(--line);
-        background: rgba(17, 20, 25, 0.93);
-        backdrop-filter: blur(12px);
+        background: #111419;
       }
       .chapter-kicker {
         display: inline-flex;
@@ -1146,7 +1289,21 @@
         line-height: 1.1;
         letter-spacing: -0.02em;
       }
-      .chapter-nav { float: right; display: flex; gap: 4px; margin-top: 3px; }
+      .chapter-head-top {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .chapter-heading { min-width: 0; }
+      .chapter-tools {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 0 0 auto;
+        padding-bottom: 1px;
+      }
+      .chapter-nav { display: flex; gap: 4px; }
       .chapter-nav button {
         display: grid;
         place-items: center;
@@ -1161,6 +1318,23 @@
         cursor: pointer;
       }
       .chapter-nav button:hover { background: rgba(255, 255, 255, 0.07); color: var(--text); }
+      .chapter-jump { display: flex; align-items: center; }
+      .jump-field { display: flex; align-items: center; gap: 6px; }
+      .jump-field > span {
+        color: var(--faint);
+        font-size: 8px;
+        font-weight: 600;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+      }
+      .jump-field .cselect { width: 64px; flex: 0 0 auto; }
+      .jump-field .cselect-trigger {
+        height: 30px;
+        padding: 0 7px 0 9px;
+        border-radius: 6px;
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+      }
       .threads-controls {
         display: flex;
         flex-wrap: wrap;
@@ -1285,7 +1459,7 @@
         vertical-align: super;
       }
 
-      /* ---------- status, toast, footer ---------- */
+      /* ---------- status and toast ---------- */
       .status {
         position: absolute;
         left: 16px;
@@ -1319,23 +1493,6 @@
         to { opacity: 1; transform: translate(-50%, 0); }
       }
 
-      footer {
-        flex: 0 0 30px;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        padding: 0 18px;
-        border-top: 1px solid var(--line);
-        background: rgba(11, 12, 14, 0.6);
-        color: var(--faint);
-        font-size: 10px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      footer a { color: var(--muted); text-decoration: none; }
-      footer a:hover { color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
-
       .noscript {
         max-width: 640px;
         margin: 12vh auto;
@@ -1348,6 +1505,7 @@
       /* ---------- responsive ---------- */
       @media (max-width: 1180px) {
         .legend { display: none; }
+        .legend-open { display: none !important; }
         .hints { display: none; }
         .topbar { gap: 8px; padding: 0 12px; }
         .translation { max-width: 104px; }
@@ -1409,6 +1567,7 @@
         .cselect-trigger { height: 32px; font-size: 11px; }
         .icon-button, .filters-toggle { height: 32px; }
         .icon-button { width: 32px; }
+        .about-link { display: none; }
         .filters-toggle { width: 32px; padding: 0; }
         .filters-toggle .button-label { display: none; }
         .stats { display: none; }
@@ -1435,14 +1594,18 @@
           width: 100%;
           height: 55%;
           min-height: 0;
-          padding: 18px 18px 32px;
+          padding: 0 18px 32px;
           border-radius: 10px;
         }
-        .chapter-head { margin: -18px -18px 16px; padding: 14px 18px 9px; }
+        .chapter-head { margin: 0 -18px 16px; padding: 16px 18px 9px; }
         .chapter-head h2 { font-size: 23px; }
+        .chapter-head-top { gap: 8px; }
+        .chapter-tools { gap: 6px; }
+        .jump-field > span { display: none; }
+        .jump-field .cselect-trigger { height: 28px; }
+        .chapter-nav button { width: 28px; height: 28px; }
         .threads-stage { min-height: 160px; border-radius: 10px; }
         .verse { font-size: 14px; }
-        footer { display: none; }
         .toast { bottom: 18px; max-width: calc(100% - 32px); white-space: normal; text-align: center; }
       }
       @media (max-width: 560px) {

@@ -112,6 +112,50 @@ pub fn book_abbr(lang: Lang, book: usize) -> &'static str {
     }
 }
 
+/// "1500 a.C.", "57 d.C." (Spanish) / "1500 BC", "AD 57" (English).
+fn format_year(lang: Lang, year: i16) -> String {
+    match (lang, year < 0) {
+        (Lang::Es, true) => format!("{} a.C.", -year),
+        (Lang::Es, false) => format!("{year} d.C."),
+        (Lang::En, true) => format!("{} BC", -year),
+        (Lang::En, false) => format!("AD {year}"),
+    }
+}
+
+/// Compact composition span, e.g. "1445–1405 a.C." or "57 d.C.".
+pub fn composition_span(lang: Lang, book: usize) -> String {
+    let Some(span) = canonical::COMPOSITION_YEARS.get(book) else {
+        return String::new();
+    };
+    if span.from == span.to {
+        return format_year(lang, span.from);
+    }
+    let same_era = (span.from < 0) == (span.to < 0);
+    if same_era {
+        if lang == Lang::En && span.from > 0 {
+            return format!("AD {}–{}", span.from, span.to);
+        }
+        let suffix = match (lang, span.from < 0) {
+            (Lang::Es, true) => " a.C.",
+            (Lang::Es, false) => " d.C.",
+            (Lang::En, true) => " BC",
+            (Lang::En, false) => " AD",
+        };
+        format!("{}–{}{suffix}", span.from.abs(), span.to.abs())
+    } else {
+        format!(
+            "{} – {}",
+            format_year(lang, span.from),
+            format_year(lang, span.to)
+        )
+    }
+}
+
+/// Composition span prefixed with "c." for display.
+pub fn composition_label(lang: Lang, book: usize) -> String {
+    format!("c. {}", composition_span(lang, book))
+}
+
 pub fn genre_name(lang: Lang, genre: usize) -> &'static str {
     match lang {
         Lang::Es => bible_core::genre_name_es(genre),

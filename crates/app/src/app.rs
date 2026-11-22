@@ -77,6 +77,18 @@ fn App() -> impl IntoView {
                         <path d="m8.4 10.7 6.9-4.2M8.4 13.3l6.9 4.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
                     </svg>
                 </button>
+                <a
+                    class="icon-button about-link"
+                    href="./about/"
+                    title=i18n::tr(lang, "Acerca de, fuentes y fechas", "About, sources and dates")
+                    aria-label=i18n::tr(lang, "Acerca de, fuentes y fechas", "About, sources and dates")
+                >
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <circle cx="12" cy="12" r="8.6" stroke="currentColor" stroke-width="1.5"/>
+                        <path d="M12 10.9v5.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                        <circle cx="12" cy="7.9" r="1" fill="currentColor"/>
+                    </svg>
+                </a>
                 <button
                     class="filters-toggle"
                     id="filters-toggle"
@@ -91,10 +103,11 @@ fn App() -> impl IntoView {
                 </button>
             </header>
             <div id="arcs-root" class="arcs-root">
-            <div class="stage" id="stage">
+            <div class="stage legend-collapsed" id="stage">
                 <canvas id="arcs"></canvas>
                 <canvas id="axis"></canvas>
-                <div class="legend" id="legend">
+                <div class="legend" id="legend-genres" hidden>
+                    <button class="legend-close" type="button" aria-label=i18n::tr(lang, "Ocultar la leyenda", "Hide the legend")>"×"</button>
                     <div class="legend-column">
                         <span class="legend-title">{i18n::tr(lang, "ANTIGUO TESTAMENTO", "OLD TESTAMENT")}</span>
                         <span class="legend-item"><i style="background:#eb568f"></i>{i18n::genre_name(lang, 0)}</span>
@@ -111,7 +124,38 @@ fn App() -> impl IntoView {
                         <span class="legend-item"><i style="background:#03ac8f"></i>{i18n::genre_name(lang, 8)}</span>
                         <span class="legend-item"><i style="background:#a06aec"></i>{i18n::genre_name(lang, 9)}</span>
                     </div>
+                    <button class="legend-action" type="button" data-measure="date">
+                        {i18n::tr(lang, "Ver fechas de composición", "View composition dates")}
+                    </button>
                 </div>
+                <div class="legend legend-dates" id="legend-dates">
+                    <button class="legend-close" type="button" aria-label=i18n::tr(lang, "Ocultar la leyenda", "Hide the legend")>"×"</button>
+                    <span class="legend-title">{i18n::tr(lang, "FECHAS DE COMPOSICIÓN", "COMPOSITION DATES")}</span>
+                    <div class="date-ramp" aria-hidden="true"></div>
+                    <div class="date-ticks" aria-hidden="true">
+                        <span style="left:0%">{i18n::tr(lang, "1500 a.C.", "1500 BC")}</span>
+                        <span style="left:31.25%">"1000"</span>
+                        <span style="left:62.5%">"500"</span>
+                        <span style="left:100%">{i18n::tr(lang, "100 d.C.", "AD 100")}</span>
+                    </div>
+                    <p class="legend-note">
+                        {i18n::tr(
+                            lang,
+                            "El color indica cuándo se compuso el libro, no cuándo ocurrieron los hechos narrados. Pasa el cursor o mantén pulsado un versículo para ver su fecha.",
+                            "The colour shows when the book was composed, not when its events took place. Hover or long-press a verse to see its date.",
+                        )}
+                    </p>
+                    <a class="legend-source" href="./about/">
+                        {i18n::tr(lang, "Metodología y tabla completa", "Method and full table")}
+                    </a>
+                    <button class="legend-action" type="button" data-measure="genre">
+                        {i18n::tr(lang, "Colorear por géneros", "Colour by genre")}
+                    </button>
+                </div>
+                <button class="legend-open" id="legend-open" type="button" title=i18n::tr(lang, "Mostrar la leyenda", "Show the legend")>
+                    <span class="legend-open-swatch" id="legend-open-swatch" aria-hidden="true"></span>
+                    <span id="legend-open-label">{i18n::tr(lang, "Composición", "Composition")}</span>
+                </button>
                 <div class="stats" id="stats"></div>
                 <div class="lemma-banner" id="lemma-banner" role="status" aria-live="polite" hidden></div>
                 <div class="hints">
@@ -164,6 +208,17 @@ fn App() -> impl IntoView {
                             </optgroup>
                         </select>
                     </label>
+                    <div class="filter-field">
+                        <span>{i18n::tr(lang, "Escala del eje", "Axis scale")}</span>
+                        <div class="measure-toggle" role="group" aria-label=i18n::tr(lang, "Escala del eje", "Axis scale")>
+                            <button class="measure-option" type="button" data-measure="genre" aria-pressed="false">
+                                {i18n::tr(lang, "Género", "Genre")}
+                            </button>
+                            <button class="measure-option" type="button" data-measure="date" aria-pressed="true">
+                                {i18n::tr(lang, "Composición", "Composition")}
+                            </button>
+                        </div>
+                    </div>
                     <div class="filters-divider"></div>
                     <label class="filters-row">
                         <span>{i18n::tr(lang, "Referencias con al menos", "References with at least")}</span>
@@ -176,6 +231,9 @@ fn App() -> impl IntoView {
                         <span>{i18n::tr(lang, "Los filtros se aplican al versículo de origen.", "Filters apply to the source verse.")}</span>
                         <button id="filters-reset" type="button">{i18n::tr(lang, "Limpiar", "Reset")}</button>
                     </div>
+                    <a class="filters-about" href="./about/">
+                        {i18n::tr(lang, "Acerca de, fuentes y fechas de composición", "About, sources and composition dates")}
+                    </a>
                 </div>
                 <div class="status" id="status">{i18n::tr(lang, "Cargando datos…", "Loading data…")}</div>
             </div>
@@ -190,22 +248,6 @@ fn App() -> impl IntoView {
                 </div>
                 <aside class="panel docked" id="threads-panel" hidden></aside>
             </section>
-            <footer>
-                "© 2026 · "
-                {i18n::tr(lang, "Datos: ", "Data: ")}
-                <a href="https://www.openbible.info/labs/cross-references/" target="_blank" rel="noopener">"OpenBible.info"</a>
-                {i18n::tr(
-                    lang,
-                    " (CC BY 4.0), reindexados · Texto: Platense (Straubinger, dominio público) y ASV (dominio público) · Original: ",
-                    " (CC BY 4.0), reindexed · Text: Platense (Straubinger, public domain) and ASV (public domain) · Original: ",
-                )}
-                <a href="https://STEPBible.org" target="_blank" rel="noopener">"STEPBible"</a>
-                {i18n::tr(
-                    lang,
-                    " (CC BY 4.0) · Glosas: RV1909 (dominio público).",
-                    " (CC BY 4.0) · Glosses: RV1909 (public domain).",
-                )}
-            </footer>
             <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
         </div>
     }

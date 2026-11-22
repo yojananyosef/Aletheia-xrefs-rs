@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlElement};
+use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlElement, HtmlSelectElement};
 
 use bible_core::format::{TranslationText, XrefData};
 use bible_core::words::WordsData;
@@ -570,7 +570,6 @@ impl Threads {
         let genre = usize::from(tables::BOOK_GENRES[book]);
         let testament = i18n::testament(lang, book);
         let genre_name = i18n::genre_name(lang, genre);
-        let name = format!("{} {}", i18n::book_name(lang, book), chapter);
         let prev = self
             .previous_chapter()
             .map(|(book, chapter)| format!("{} {}", i18n::book_name(lang, book), chapter))
@@ -580,6 +579,14 @@ impl Threads {
             .map(|(book, chapter)| format!("{} {}", i18n::book_name(lang, book), chapter))
             .unwrap_or_default();
 
+        let chapter_count = self.versification.chapters_of(book);
+        let mut chapter_options = String::with_capacity(chapter_count * 40);
+        for number in 1..=chapter_count {
+            let selected = if number as u16 == chapter { " selected" } else { "" };
+            chapter_options.push_str(&format!(
+                "<option value=\"{number}\"{selected}>{number}</option>"
+            ));
+        }
         let direction = self.state.borrow().direction;
         let mut counts = vec![0usize; (end - start + 1) as usize];
         for link in &self.links {
@@ -640,11 +647,14 @@ impl Threads {
             i18n::tr(lang, "Texto original", "Original text")
         };
         let header = format!(
-            "<header class=\"chapter-head\"><span class=\"chapter-kicker\"><i style=\"background:{}\"></i>{} · {}</span><h2 id=\"threads-title\">{}</h2><nav class=\"chapter-nav\"><button id=\"threads-prev\" type=\"button\" title=\"{} ({prev})\">‹</button><button id=\"threads-next\" type=\"button\" title=\"{} ({next})\">›</button></nav><div class=\"threads-controls\"><div class=\"threads-directions\"><button id=\"dir-out\" type=\"button\"{}>{}</button><button id=\"dir-in\" type=\"button\"{}>{}</button><button id=\"dir-both\" type=\"button\"{}>{}</button></div><button id=\"threads-original\" class=\"threads-original\" type=\"button\" aria-pressed=\"{}\">{}</button></div></header>",
+            "<header class=\"chapter-head\"><div class=\"chapter-head-top\"><div class=\"chapter-heading\"><span class=\"chapter-kicker\"><i style=\"background:{}\"></i>{} · {}</span><h2 id=\"threads-title\">{}</h2></div><div class=\"chapter-tools\"><label class=\"jump-field\"><span>{}</span><select id=\"threads-chapter\" aria-label=\"{}\">{}</select></label><nav class=\"chapter-nav\"><button id=\"threads-prev\" type=\"button\" title=\"{} ({prev})\">‹</button><button id=\"threads-next\" type=\"button\" title=\"{} ({next})\">›</button></nav></div></div><div class=\"threads-controls\"><div class=\"threads-directions\"><button id=\"dir-out\" type=\"button\"{}>{}</button><button id=\"dir-in\" type=\"button\"{}>{}</button><button id=\"dir-both\" type=\"button\"{}>{}</button></div><button id=\"threads-original\" class=\"threads-original\" type=\"button\" aria-pressed=\"{}\">{}</button></div></header>",
             GENRE_HEX[genre],
             escape(genre_name),
             testament,
-            escape(&name),
+            escape(i18n::book_name(lang, book)),
+            i18n::tr(lang, "Capítulo", "Chapter"),
+            i18n::tr(lang, "Capítulo", "Chapter"),
+            chapter_options,
             i18n::tr(lang, "Capítulo anterior", "Previous chapter"),
             i18n::tr(lang, "Capítulo siguiente", "Next chapter"),
             if direction == Direction::Outgoing { " class=\"active\"" } else { "" },
@@ -678,9 +688,15 @@ impl Threads {
         self.reader
             .set_inner_html(&format!("{header}{status}<div class=\"verses\">{verses}</div>"));
         self.reader_scroll.set_scroll_top(scroll);
-        // Fresh nodes: rebind the chapter buttons.
+        // Fresh nodes: rebind the chapter buttons and let ui.js theme the new
+        // chapter selector (it is recreated on every chapter change).
         self.attach_chapter_buttons();
         self.attach_direction_buttons();
+        if let Some(window) = web_sys::window() {
+            if let Ok(event) = web_sys::Event::new("aletheia:enhance-selects") {
+                let _ = window.dispatch_event(&event);
+            }
+        }
         self.draw();
     }
 
@@ -730,6 +746,26 @@ impl Threads {
                 }
             });
             let _ = button.add_event_listener_with_callback("click", handler.as_ref().unchecked_ref());
+            handler.forget();
+        }
+        if let Some(select) = document
+            .get_element_by_id("threads-chapter")
+            .and_then(|node| node.dyn_into::<HtmlSelectElement>().ok())
+        {
+            let this = self.clone();
+            let field = select.clone();
+            let handler = Closure::<dyn FnMut()>::new(move || {
+                let Ok(chapter) = field.value().parse::<u16>() else {
+                    return;
+                };
+                let book = this.state.borrow().book;
+                if chapter == 0 {
+                    return;
+                }
+                this.set_passage(book, chapter);
+            });
+            let _ =
+                select.add_event_listener_with_callback("change", handler.as_ref().unchecked_ref());
             handler.forget();
         }
         if let Some(button) = document.get_element_by_id("threads-original") {

@@ -1,0 +1,561 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Acerca de, fuentes y fechas · Aletheia</title>
+    <meta
+      name="description"
+      content="Qué es Aletheia, cómo se leen sus arcos e hilos, de dónde vienen los datos y cómo se fecharon los 66 libros según la erudición adventista."
+    />
+    <meta name="theme-color" content="#0b0c0e" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="robots" content="index,follow" />
+    <link rel="canonical" href="https://yojananyosef.github.io/Aletheia-xrefs-rs/about/" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="Aletheia · Referencias cruzadas" />
+    <meta property="og:title" content="Acerca de Aletheia · fuentes y fechas" />
+    <meta
+      property="og:description"
+      content="Metodología, fuentes, licencias y la tabla de fechas de composición de los 66 libros."
+    />
+    <meta property="og:url" content="https://yojananyosef.github.io/Aletheia-xrefs-rs/about/" />
+    <meta property="og:image" content="https://yojananyosef.github.io/Aletheia-xrefs-rs/og-image.png" />
+    <meta property="og:locale" content="es_ES" />
+    <link rel="icon" type="image/png" sizes="192x192" href="../icons/icon-192.png" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "AboutPage",
+        "name": "Acerca de Aletheia",
+        "url": "https://yojananyosef.github.io/Aletheia-xrefs-rs/about/",
+        "inLanguage": "es",
+        "isPartOf": {
+          "@type": "WebApplication",
+          "name": "Aletheia · Referencias cruzadas de la Biblia",
+          "url": "https://yojananyosef.github.io/Aletheia-xrefs-rs/"
+        }
+      }
+    </script>
+    <style>
+      :root {
+        --bg: #0b0c0e;
+        --bg-elev: #111419;
+        --surface: #181c22;
+        --line: rgba(255, 255, 255, 0.075);
+        --line-strong: rgba(255, 255, 255, 0.14);
+        --text: #f2f0ea;
+        --text-soft: #c7c5bd;
+        --muted: #969b9f;
+        --faint: #6d7379;
+        --accent: #e4b363;
+        --accent-soft: rgba(228, 179, 99, 0.14);
+        --font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+        --font-serif: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif;
+        --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      }
+      * { box-sizing: border-box; }
+      html { background: var(--bg); }
+      body {
+        margin: 0;
+        min-height: 100%;
+        background:
+          radial-gradient(760px 420px at 14% -12%, rgba(235, 86, 143, 0.07), transparent 62%),
+          radial-gradient(900px 520px at 92% -18%, rgba(23, 167, 180, 0.055), transparent 64%),
+          var(--bg);
+        color: var(--text);
+        font-family: var(--font-ui);
+        font-size: 15px;
+        line-height: 1.65;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+      ::selection { background: rgba(228, 179, 99, 0.28); color: #fff; }
+      a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+      a:hover { color: #f0c987; }
+      .wrap { max-width: 940px; margin: 0 auto; padding: 0 24px 72px; }
+      .bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 22px 0 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--text);
+        text-decoration: none;
+      }
+      .brand svg { width: 27px; height: 27px; flex: 0 0 auto; color: var(--text-soft); }
+      .brand-kicker {
+        display: block;
+        color: var(--faint);
+        font-size: 8px;
+        font-weight: 700;
+        letter-spacing: 0.18em;
+      }
+      .brand-name { display: block; font-size: 13px; font-weight: 600; letter-spacing: 0.01em; }
+      .bar nav { display: flex; gap: 18px; font-size: 12px; }
+      .bar nav a { color: var(--muted); text-decoration: none; }
+      .bar nav a:hover { color: var(--text); }
+      .hero { padding: 58px 0 8px; }
+      .kicker {
+        margin: 0 0 14px;
+        color: var(--accent);
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+      h1 {
+        max-width: 760px;
+        margin: 0;
+        font-family: var(--font-serif);
+        font-size: clamp(38px, 7vw, 64px);
+        font-weight: 500;
+        letter-spacing: -0.035em;
+        line-height: 1.04;
+      }
+      .lede {
+        max-width: 700px;
+        margin: 22px 0 0;
+        color: var(--text-soft);
+        font-family: var(--font-serif);
+        font-size: clamp(18px, 2.6vw, 22px);
+        line-height: 1.5;
+      }
+      section { margin-top: 52px; padding-top: 34px; border-top: 1px solid var(--line); }
+      h2 {
+        margin: 0 0 16px;
+        font-family: var(--font-serif);
+        font-size: clamp(25px, 4vw, 32px);
+        font-weight: 500;
+        letter-spacing: -0.02em;
+        line-height: 1.15;
+      }
+      h3 {
+        margin: 30px 0 10px;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+      }
+      p { max-width: 760px; margin: 0 0 14px; color: var(--text-soft); }
+      p.small, li.small { color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+      strong { color: var(--text); font-weight: 600; }
+      ul { margin: 0 0 16px; padding-left: 20px; color: var(--text-soft); }
+      li { margin: 5px 0; }
+      .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 20px 0 8px; }
+      .card {
+        padding: 16px 16px 14px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: linear-gradient(180deg, #15191f, #101318);
+      }
+      .card b { display: block; margin-bottom: 3px; color: var(--text); font-size: 13px; font-weight: 600; }
+      .card span { display: block; color: var(--muted); font-size: 11.5px; line-height: 1.5; }
+      .ramp {
+        height: 8px;
+        margin: 22px 0 6px;
+        border-radius: 99px;
+        background: linear-gradient(90deg, #5b7cfa 0%, #42b3a5 25%, #c9b458 50%, #e08a55 75%, #d76a86 100%);
+      }
+      .ramp-labels {
+        position: relative;
+        height: 16px;
+        margin: 2px 0 24px;
+        color: var(--faint);
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-variant-numeric: tabular-nums;
+      }
+      .ramp-labels span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+      .ramp-labels span:first-child { transform: none; }
+      .ramp-labels span:last-child { transform: translateX(-100%); }
+      .tables { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 18px; }
+      table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+      caption {
+        margin-bottom: 8px;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.15em;
+        text-align: left;
+        text-transform: uppercase;
+      }
+      th {
+        padding: 0 8px 7px;
+        border-bottom: 1px solid var(--line-strong);
+        color: var(--faint);
+        font-size: 9px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-align: left;
+        text-transform: uppercase;
+      }
+      td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: baseline; }
+      tbody tr:hover { background: rgba(255, 255, 255, 0.025); }
+      td.num { width: 26px; color: var(--faint); font-family: var(--font-mono); font-size: 9.5px; text-align: right; }
+      td.date { color: var(--text); font-family: var(--font-mono); font-size: 10.5px; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+      th.date { text-align: right; }
+      .note {
+        margin-top: 22px;
+        padding: 14px 16px;
+        border: 1px solid rgba(228, 179, 99, 0.22);
+        border-radius: 10px;
+        background: var(--accent-soft);
+        color: var(--text-soft);
+        font-size: 12.5px;
+        line-height: 1.6;
+      }
+      .sources { display: grid; gap: 10px; margin-top: 18px; }
+      .source {
+        display: grid;
+        grid-template-columns: 170px 1fr;
+        gap: 16px;
+        padding: 12px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .source b { color: var(--text); font-size: 12.5px; font-weight: 600; }
+      .source span { color: var(--muted); font-size: 12.5px; line-height: 1.55; }
+      .source a { color: var(--accent); text-decoration: none; }
+      .source a:hover { text-decoration: underline; }
+      .en { color: var(--muted); }
+      .en p, .en li { color: var(--muted); }
+      footer {
+        margin-top: 56px;
+        padding-top: 20px;
+        border-top: 1px solid var(--line);
+        color: var(--faint);
+        font-size: 11px;
+      }
+      footer a { color: var(--muted); text-decoration: none; }
+      footer a:hover { color: var(--text); text-decoration: underline; }
+      @media (max-width: 760px) {
+        .wrap { padding: 0 18px 52px; }
+        .hero { padding-top: 40px; }
+        .cards { grid-template-columns: 1fr; }
+        .tables { grid-template-columns: 1fr; gap: 34px; }
+        .source { grid-template-columns: 1fr; gap: 3px; }
+      }
+      @media (max-width: 520px) {
+        .bar nav { gap: 12px; }
+        .brand-name { font-size: 12px; }
+        td, th { padding-left: 5px; padding-right: 5px; }
+        td.date { font-size: 9.5px; }
+        .ramp-labels { font-size: 8.5px; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * { scroll-behavior: auto !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="bar">
+        <a class="brand" href="../" aria-label="Volver al mapa de referencias">
+          <svg viewBox="0 0 28 28" fill="none" aria-hidden="true">
+            <path d="M3.5 23a10.5 10.5 0 0 1 21 0" stroke="#eb568f" stroke-width="1.7" stroke-linecap="round"/>
+            <path d="M8 23a6 6 0 0 1 12 0" stroke="#e4b363" stroke-width="1.7" stroke-linecap="round"/>
+            <path d="M12.2 23a1.8 1.8 0 0 1 3.6 0" stroke="#17a7b4" stroke-width="1.7" stroke-linecap="round"/>
+            <path d="M2 23h24" stroke="currentColor" stroke-opacity=".28" stroke-width="1"/>
+          </svg>
+          <span>
+            <span class="brand-kicker">ALETHEIA</span>
+            <span class="brand-name">Referencias cruzadas</span>
+          </span>
+        </a>
+        <nav aria-label="Navegación">
+          <a href="../">Mapa</a>
+          <a href="../?view=threads">Hilos</a>
+          <a href="#fechas">Fechas</a>
+        </nav>
+      </header>
+
+      <main>
+        <div class="hero">
+          <p class="kicker">Acerca de</p>
+          <h1>Un mapa para leer la Biblia como una red.</h1>
+          <p class="lede">
+            Aletheia reúne <strong>344.799 referencias cruzadas</strong> en
+            <strong>31.102 versículos</strong> y las dibuja como arcos e hilos. No es un comentario
+            ni una traducción nueva: es una herramienta de lectura para ver cómo se citan,
+            se interpretan y se responden los textos bíblicos entre sí.
+          </p>
+        </div>
+
+        <section>
+          <h2>Qué puedes hacer</h2>
+          <div class="cards">
+            <div class="card">
+              <b>Arcos</b>
+              <span>El canon completo en una sola línea. Cada arco une un versículo con las referencias que lo citan o lo desarrollan.</span>
+            </div>
+            <div class="card">
+              <b>Hilos</b>
+              <span>Lectura por capítulos, con el texto bíblico, el original hebreo o griego y las referencias en contexto.</span>
+            </div>
+            <div class="card">
+              <b>Filtros y enlaces</b>
+              <span>Acota por testamento, género, libro o votos. Comparte la vista exacta: la URL conserva el pasaje y los filtros.</span>
+            </div>
+          </div>
+          <p>
+            El texto está disponible en la <strong>Biblia Platense</strong> (español) y la
+            <strong>American Standard Version</strong> (inglés). En Arcos e Hilos puedes abrir el
+            texto original bajo demanda, con lema Strong, morfología, glosas en español y un filtro
+            por lema. Los datos se descargan una vez y quedan disponibles sin conexión.
+          </p>
+          <p class="small">
+            Atajos: rueda o pinza para acercar, arrastrar para desplazar, clic para elegir un
+            versículo, pulsación larga en móvil para explorar. El botón de compartir copia la
+            dirección de la vista actual.
+          </p>
+        </section>
+
+        <section id="fechas">
+          <h2>Fechas de composición</h2>
+          <p>
+            De forma predeterminada el eje se colorea por
+            <strong>fecha aproximada de composición</strong>; el selector «Escala del eje» de los
+            filtros o el botón de la leyenda permiten volver al <strong>género literario</strong>.
+            La escala cronológica es una regla histórica, no una medida inspirada: sirve para ver
+            de un vistazo qué libros son más antiguos y cómo se agrupan las épocas. El color va
+            del azul (más antiguo) al rosa (más reciente); la regla inferior del diagrama marca los
+            siglos.
+          </p>
+          <div class="ramp" aria-hidden="true"></div>
+          <div class="ramp-labels" aria-hidden="true">
+            <span style="left:0%">1500 a.C.</span>
+            <span style="left:31.25%">1000</span>
+            <span style="left:62.5%">500</span>
+            <span style="left:100%">100 d.C.</span>
+          </div>
+          <p>
+            Las fechas de la tabla son las de <strong>composición</strong> (escritura o fijación)
+            de cada libro, <strong>no las de los acontecimientos que narra</strong>. Por ejemplo,
+            los hechos de Génesis son muy anteriores al año en que se escribió el libro. Las
+            fechas siguen las introducciones y la cronología del
+            <strong>Seventh-day Adventist Bible Commentary</strong>
+            (<em>Comentario Bíblico Adventista</em>, ed. 1980), la obra de referencia de la
+            erudición adventista. Cuando el comentario fija un año, se usa ese año; cuando solo
+            describe el período histórico, se indica el lapso probable. Los rangos expresan
+            incertidumbre, no fechas alternativas. Para el color se usa el punto medio del rango;
+            la tabla muestra el rango completo.
+          </p>
+          <div class="note">
+            <strong>Cómo leer la tabla.</strong> «c.» significa «circa», aproximadamente. Las
+            fechas son de composición o de fijación del libro, no de los hechos que narra. En
+            libros con varios autores o varias etapas —por ejemplo Salmos o Isaías— el rango
+            cubre el proceso completo. No se reproducen pasajes del comentario: solo se citan
+            fechas aproximadas con fines de referencia.
+          </div>
+
+          <div class="tables">
+            <div>
+              <table>
+                <caption>Antiguo Testamento</caption>
+                <thead>
+                  <tr><th>#</th><th>Libro</th><th class="date">Composición</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td class="num">1</td><td>Génesis</td><td class="date">c. 1500 a.C.</td></tr>
+                  <tr><td class="num">2</td><td>Éxodo</td><td class="date">c. 1445–1405 a.C.</td></tr>
+                  <tr><td class="num">3</td><td>Levítico</td><td class="date">c. 1445–1405 a.C.</td></tr>
+                  <tr><td class="num">4</td><td>Números</td><td class="date">c. 1445–1405 a.C.</td></tr>
+                  <tr><td class="num">5</td><td>Deuteronomio</td><td class="date">c. 1405 a.C.</td></tr>
+                  <tr><td class="num">6</td><td>Josué</td><td class="date">c. 1400–1350 a.C.</td></tr>
+                  <tr><td class="num">7</td><td>Jueces</td><td class="date">c. 1050–1000 a.C.</td></tr>
+                  <tr><td class="num">8</td><td>Rut</td><td class="date">c. 1000–950 a.C.</td></tr>
+                  <tr><td class="num">9</td><td>1 Samuel</td><td class="date">c. 1000–950 a.C.</td></tr>
+                  <tr><td class="num">10</td><td>2 Samuel</td><td class="date">c. 1000–950 a.C.</td></tr>
+                  <tr><td class="num">11</td><td>1 Reyes</td><td class="date">c. 560–550 a.C.</td></tr>
+                  <tr><td class="num">12</td><td>2 Reyes</td><td class="date">c. 560–550 a.C.</td></tr>
+                  <tr><td class="num">13</td><td>1 Crónicas</td><td class="date">c. 400 a.C.</td></tr>
+                  <tr><td class="num">14</td><td>2 Crónicas</td><td class="date">c. 400 a.C.</td></tr>
+                  <tr><td class="num">15</td><td>Esdras</td><td class="date">c. 440–400 a.C.</td></tr>
+                  <tr><td class="num">16</td><td>Nehemías</td><td class="date">c. 430–400 a.C.</td></tr>
+                  <tr><td class="num">17</td><td>Ester</td><td class="date">c. 465–425 a.C.</td></tr>
+                  <tr><td class="num">18</td><td>Job</td><td class="date">c. 1500–1450 a.C.</td></tr>
+                  <tr><td class="num">19</td><td>Salmos</td><td class="date">c. 1400–400 a.C.</td></tr>
+                  <tr><td class="num">20</td><td>Proverbios</td><td class="date">c. 970–931 a.C.</td></tr>
+                  <tr><td class="num">21</td><td>Eclesiastés</td><td class="date">c. 940–931 a.C.</td></tr>
+                  <tr><td class="num">22</td><td>Cantares</td><td class="date">c. 970–950 a.C.</td></tr>
+                  <tr><td class="num">23</td><td>Isaías</td><td class="date">c. 745–680 a.C.</td></tr>
+                  <tr><td class="num">24</td><td>Jeremías</td><td class="date">c. 627–580 a.C.</td></tr>
+                  <tr><td class="num">25</td><td>Lamentaciones</td><td class="date">c. 586 a.C.</td></tr>
+                  <tr><td class="num">26</td><td>Ezequiel</td><td class="date">c. 593–570 a.C.</td></tr>
+                  <tr><td class="num">27</td><td>Daniel</td><td class="date">c. 605–530 a.C.</td></tr>
+                  <tr><td class="num">28</td><td>Oseas</td><td class="date">c. 755–715 a.C.</td></tr>
+                  <tr><td class="num">29</td><td>Joel</td><td class="date">c. 700–650 a.C.</td></tr>
+                  <tr><td class="num">30</td><td>Amós</td><td class="date">c. 767–753 a.C.</td></tr>
+                  <tr><td class="num">31</td><td>Abdías</td><td class="date">c. 850–800 a.C.</td></tr>
+                  <tr><td class="num">32</td><td>Jonás</td><td class="date">c. 790–750 a.C.</td></tr>
+                  <tr><td class="num">33</td><td>Miqueas</td><td class="date">c. 735–700 a.C.</td></tr>
+                  <tr><td class="num">34</td><td>Nahúm</td><td class="date">c. 640–630 a.C.</td></tr>
+                  <tr><td class="num">35</td><td>Habacuc</td><td class="date">c. 630–610 a.C.</td></tr>
+                  <tr><td class="num">36</td><td>Sofonías</td><td class="date">c. 630–625 a.C.</td></tr>
+                  <tr><td class="num">37</td><td>Hageo</td><td class="date">c. 520 a.C.</td></tr>
+                  <tr><td class="num">38</td><td>Zacarías</td><td class="date">c. 520–480 a.C.</td></tr>
+                  <tr><td class="num">39</td><td>Malaquías</td><td class="date">c. 425 a.C.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div>
+              <table>
+                <caption>Nuevo Testamento</caption>
+                <thead>
+                  <tr><th>#</th><th>Libro</th><th class="date">Composición</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td class="num">40</td><td>Mateo</td><td class="date">c. 50–70 d.C.</td></tr>
+                  <tr><td class="num">41</td><td>Marcos</td><td class="date">c. 55–70 d.C.</td></tr>
+                  <tr><td class="num">42</td><td>Lucas</td><td class="date">c. 61–63 d.C.</td></tr>
+                  <tr><td class="num">43</td><td>Juan</td><td class="date">c. 90–95 d.C.</td></tr>
+                  <tr><td class="num">44</td><td>Hechos</td><td class="date">c. 62–63 d.C.</td></tr>
+                  <tr><td class="num">45</td><td>Romanos</td><td class="date">c. 57–58 d.C.</td></tr>
+                  <tr><td class="num">46</td><td>1 Corintios</td><td class="date">c. 57 d.C.</td></tr>
+                  <tr><td class="num">47</td><td>2 Corintios</td><td class="date">c. 57 d.C.</td></tr>
+                  <tr><td class="num">48</td><td>Gálatas</td><td class="date">c. 57–58 d.C.</td></tr>
+                  <tr><td class="num">49</td><td>Efesios</td><td class="date">c. 61–63 d.C.</td></tr>
+                  <tr><td class="num">50</td><td>Filipenses</td><td class="date">c. 62–63 d.C.</td></tr>
+                  <tr><td class="num">51</td><td>Colosenses</td><td class="date">c. 61–62 d.C.</td></tr>
+                  <tr><td class="num">52</td><td>1 Tesalonicenses</td><td class="date">c. 51 d.C.</td></tr>
+                  <tr><td class="num">53</td><td>2 Tesalonicenses</td><td class="date">c. 51–52 d.C.</td></tr>
+                  <tr><td class="num">54</td><td>1 Timoteo</td><td class="date">c. 64–66 d.C.</td></tr>
+                  <tr><td class="num">55</td><td>2 Timoteo</td><td class="date">c. 67 d.C.</td></tr>
+                  <tr><td class="num">56</td><td>Tito</td><td class="date">c. 63–65 d.C.</td></tr>
+                  <tr><td class="num">57</td><td>Filemón</td><td class="date">c. 61–62 d.C.</td></tr>
+                  <tr><td class="num">58</td><td>Hebreos</td><td class="date">c. 67–69 d.C.</td></tr>
+                  <tr><td class="num">59</td><td>Santiago</td><td class="date">c. 45–49 d.C.</td></tr>
+                  <tr><td class="num">60</td><td>1 Pedro</td><td class="date">c. 63–67 d.C.</td></tr>
+                  <tr><td class="num">61</td><td>2 Pedro</td><td class="date">c. 65–67 d.C.</td></tr>
+                  <tr><td class="num">62</td><td>1 Juan</td><td class="date">c. 90–95 d.C.</td></tr>
+                  <tr><td class="num">63</td><td>2 Juan</td><td class="date">c. 90–95 d.C.</td></tr>
+                  <tr><td class="num">64</td><td>3 Juan</td><td class="date">c. 90–95 d.C.</td></tr>
+                  <tr><td class="num">65</td><td>Judas</td><td class="date">c. 65–85 d.C.</td></tr>
+                  <tr><td class="num">66</td><td>Apocalipsis</td><td class="date">c. 90–96 d.C.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <p class="small">
+            Referencia bibliográfica: <em>Seventh-day Adventist Bible Commentary</em>
+            (Comentario Bíblico Adventista del Séptimo Día), edición de 1980, introducciones a los
+            libros y secciones de cronología.
+            <a href="https://archive.org/details/SdaBibleCommentary1980" target="_blank" rel="noopener">Archive.org</a>.
+          </p>
+        </section>
+
+        <section id="fuentes">
+          <h2>Fuentes y licencias</h2>
+          <p>
+            El código de Aletheia es original y se publica bajo licencia MIT. Los datos conservan
+            sus propias licencias; estas son las atribuciones que corresponden:
+          </p>
+          <div class="sources">
+            <div class="source">
+              <b>OpenBible.info</b>
+              <span>
+                Referencias cruzadas, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>.
+                Reindexadas para este visualizador.
+                <a href="https://www.openbible.info/labs/cross-references/" target="_blank" rel="noopener">openbible.info</a>
+              </span>
+            </div>
+            <div class="source">
+              <b>Biblia Platense</b>
+              <span>
+                Traducción de Mons. Juan Straubinger, dominio público. Fuente: CrossWire Bible
+                Society.
+              </span>
+            </div>
+            <div class="source">
+              <b>American Standard Version</b>
+              <span>
+                Dominio público. Fuente: <a href="https://ebible.org/" target="_blank" rel="noopener">eBible.org</a>.
+              </span>
+            </div>
+            <div class="source">
+              <b>STEPBible Data</b>
+              <span>
+                TAHOT, TAGNT, TBESH y TBESG, de Tyndale House Cambridge y STEPBible.org,
+                <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>.
+                <a href="https://github.com/STEPBible/STEPBible-Data" target="_blank" rel="noopener">github.com/STEPBible</a>
+              </span>
+            </div>
+            <div class="source">
+              <b>Reina-Valera 1909</b>
+              <span>
+                Dominio público. Fuente: <a href="https://ebible.org/spaRV1909/" target="_blank" rel="noopener">eBible.org</a>.
+                Sus palabras con números Strong se alinean con el texto original para producir las
+                glosas y los sentidos de uso del léxico.
+              </span>
+            </div>
+            <div class="source">
+              <b>SDA Bible Commentary</b>
+              <span>
+                <em>Seventh-day Adventist Bible Commentary</em> (Comentario Bíblico Adventista),
+                edición de 1980, usada como referencia para las fechas aproximadas de composición.
+                No se redistribuye su texto. Los derechos pertenecen a sus editores.
+              </span>
+            </div>
+          </div>
+          <p class="small">
+            Aletheia no está afiliada a las editoriales ni a los proyectos de datos citados. Las
+            marcas y los textos pertenecen a sus respectivos titulares.
+          </p>
+        </section>
+
+        <section>
+          <h2>Privacidad y funcionamiento</h2>
+          <p>
+            Aletheia no usa analítica, cookies ni rastreadores. La aplicación se ejecuta en tu
+            navegador con WebAssembly; las preferencias de vista viajan en la propia URL para que
+            puedas compartirla. Un service worker guarda los archivos y los datos en la caché del
+            navegador para que el mapa siga funcionando sin conexión. Puedes borrar esa caché desde
+            la configuración del navegador en cualquier momento.
+          </p>
+          <p>
+            El renderizado usa WebGPU cuando está disponible y vuelve a WebGL2 si no lo está. Los
+            arcos se dibujan solo cuando hacen falta: no hay un bucle de animación permanente.
+          </p>
+        </section>
+
+        <section lang="en" class="en">
+          <h2>About this project</h2>
+          <p>
+            Aletheia is a free, open-source cross-reference explorer for the Bible. It draws
+            344,799 cross-references across 31,102 verses and offers the Platense Spanish Bible,
+            the American Standard Version, and the Hebrew/Greek text with Strong's lexicon and
+            Spanish glosses. The interface is available in Spanish and English.
+          </p>
+          <p>
+            The composition-date scale (on by default) is an approximate historical aid based on
+            the introductions and chronology of the <em>Seventh-day Adventist Bible Commentary</em>
+            (1980). These are dates of composition, not dates of the events narrated. Ranges
+            express uncertainty; the colour uses the midpoint of each range. The dates do not
+            affect the biblical text and are not presented as inspired.
+          </p>
+          <p>
+            Code: MIT. Data: OpenBible.info (CC BY 4.0), STEPBible (CC BY 4.0), Platense and ASV
+            (public domain), RV1909 (public domain). See the source list above for links.
+          </p>
+        </section>
+      </main>
+
+      <footer>
+        <p>
+          <a href="../">Volver al mapa</a> ·
+          <a href="https://github.com/yojananyosef/Aletheia-xrefs-rs" target="_blank" rel="noopener">Código en GitHub</a> ·
+          <a href="https://www.openbible.info/labs/cross-references/" target="_blank" rel="noopener">OpenBible.info</a>
+        </p>
+        <p>© 2026 Aletheia. El código es MIT; los datos conservan sus licencias.</p>
+      </footer>
+    </div>
+  </body>
+</html>

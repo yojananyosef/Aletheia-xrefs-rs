@@ -7,6 +7,98 @@ pub const BOOK_NAMES: [&str; 66] = ["Genesis", "Exodus", "Leviticus", "Numbers",
 pub const BOOK_GENRES: [u8; 66] = [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 9];
 pub const GENRE_NAMES: [&str; 10] = ["Law", "History", "Poetry & Wisdom", "Major Prophets", "Minor Prophets", "Gospels", "Acts", "Pauline Epistles", "General Epistles", "Revelation"];
 
+/// Approximate span in which each book was composed, in canonical order.
+/// Negative years are B.C., positive years are A.D. The ranges follow the
+/// introductions and chronology of the Seventh-day Adventist Bible Commentary
+/// (1980); they express uncertainty, not alternative dates. Where the
+/// commentary does not fix a year, the span reflects the historical setting it
+/// assigns to the book. Do not treat these values as inspired or exact.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Composition {
+    pub from: i16,
+    pub to: i16,
+}
+
+impl Composition {
+    pub const fn new(from: i16, to: i16) -> Self {
+        Self { from, to }
+    }
+
+    /// Representative year used for the colour scale.
+    pub fn midpoint(self) -> i16 {
+        (self.from + self.to) / 2
+    }
+}
+
+pub const COMPOSITION_YEARS: [Composition; 66] = [
+    Composition::new(-1500, -1500), // Genesis
+    Composition::new(-1445, -1405), // Exodus
+    Composition::new(-1445, -1405), // Leviticus
+    Composition::new(-1445, -1405), // Numbers
+    Composition::new(-1405, -1405), // Deuteronomy
+    Composition::new(-1400, -1350), // Joshua
+    Composition::new(-1050, -1000), // Judges
+    Composition::new(-1000, -950),  // Ruth
+    Composition::new(-1000, -950),  // 1 Samuel
+    Composition::new(-1000, -950),  // 2 Samuel
+    Composition::new(-560, -550),   // 1 Kings
+    Composition::new(-560, -550),   // 2 Kings
+    Composition::new(-400, -400),   // 1 Chronicles
+    Composition::new(-400, -400),   // 2 Chronicles
+    Composition::new(-440, -400),   // Ezra
+    Composition::new(-430, -400),   // Nehemiah
+    Composition::new(-465, -425),   // Esther
+    Composition::new(-1500, -1450), // Job
+    Composition::new(-1400, -400),  // Psalms
+    Composition::new(-970, -931),   // Proverbs
+    Composition::new(-940, -931),   // Ecclesiastes
+    Composition::new(-970, -950),   // Song of Solomon
+    Composition::new(-745, -680),   // Isaiah
+    Composition::new(-627, -580),   // Jeremiah
+    Composition::new(-586, -586),   // Lamentations
+    Composition::new(-593, -570),   // Ezekiel
+    Composition::new(-605, -530),   // Daniel
+    Composition::new(-755, -715),   // Hosea
+    Composition::new(-700, -650),   // Joel
+    Composition::new(-767, -753),   // Amos
+    Composition::new(-850, -800),   // Obadiah
+    Composition::new(-790, -750),   // Jonah
+    Composition::new(-735, -700),   // Micah
+    Composition::new(-640, -630),   // Nahum
+    Composition::new(-630, -610),   // Habakkuk
+    Composition::new(-630, -625),   // Zephaniah
+    Composition::new(-520, -520),   // Haggai
+    Composition::new(-520, -480),   // Zechariah
+    Composition::new(-425, -425),   // Malachi
+    Composition::new(50, 70),       // Matthew
+    Composition::new(55, 70),       // Mark
+    Composition::new(61, 63),       // Luke
+    Composition::new(90, 95),       // John
+    Composition::new(62, 63),       // Acts
+    Composition::new(57, 58),       // Romans
+    Composition::new(57, 57),       // 1 Corinthians
+    Composition::new(57, 57),       // 2 Corinthians
+    Composition::new(57, 58),       // Galatians
+    Composition::new(61, 63),       // Ephesians
+    Composition::new(62, 63),       // Philippians
+    Composition::new(61, 62),       // Colossians
+    Composition::new(51, 51),       // 1 Thessalonians
+    Composition::new(51, 52),       // 2 Thessalonians
+    Composition::new(64, 66),       // 1 Timothy
+    Composition::new(67, 67),       // 2 Timothy
+    Composition::new(63, 65),       // Titus
+    Composition::new(61, 62),       // Philemon
+    Composition::new(67, 69),       // Hebrews
+    Composition::new(45, 49),       // James
+    Composition::new(63, 67),       // 1 Peter
+    Composition::new(65, 67),       // 2 Peter
+    Composition::new(90, 95),       // 1 John
+    Composition::new(90, 95),       // 2 John
+    Composition::new(90, 95),       // 3 John
+    Composition::new(65, 85),       // Jude
+    Composition::new(90, 96),       // Revelation
+];
+
 /// Number of verses in each chapter of each book (KJV versification).
 pub const KJV_CHAPTER_VERSE_COUNTS: [&[u16]; 66] = [
     &[31, 25, 24, 26, 32, 22, 24, 22, 29, 32, 32, 20, 18, 24, 21, 16, 27, 33, 38, 18, 34, 24, 20, 67, 34, 35, 46, 22, 35, 43, 55, 32, 20, 31, 29, 43, 36, 30, 23, 23, 57, 38, 34, 34, 28, 34, 31, 22, 33, 26],
