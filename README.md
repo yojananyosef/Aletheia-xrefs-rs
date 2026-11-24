@@ -124,8 +124,7 @@ El script compila `crates/app` con Trunk y publica `dist/` en la rama
 `gh-pages` (incluidos los binarios de datos). En GitHub, la fuente de Pages debe
 ser la rama `gh-pages`, carpeta `/`. `Trunk.toml` usa `public_url = "./"` para
 que los recursos funcionen bajo la subruta del proyecto.
-Sitio: <https://arcs.johan.cl/> (el repositorio técnico sigue siendo
-`Aletheia-xrefs-rs`; GitHub Pages puede seguir sirviendo la misma compilación).
+Sitio: <https://arcs.johan.cl/>. Repositorio: <https://github.com/yojananyosef/aletheia-arcs>.
 
 ## Diseño
 
