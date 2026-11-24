@@ -51,7 +51,10 @@ automático a WebGL2) para el diagrama de arcos.
       con un aviso explícito.
 - [x] Filtro `?lemma=H2617A`: muestra y resalta en oro los arcos entre
       versículos que comparten un lema, con un aviso que permite quitarlo. Se
-      combina con votos, testamento, género y libro.
+      combina con votos, testamento, género y libro. Con un pasaje enfocado, el
+      aviso incluye una capa «Capítulo» para alternar entre solo el lema y lema
+      más los arcos del capítulo. El hover se limita al pasaje enfocado; al
+      recorrer un arco del lema identifica su ocurrencia más cercana.
 
 ### Siguiente fase
 

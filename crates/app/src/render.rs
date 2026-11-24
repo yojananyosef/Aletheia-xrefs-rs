@@ -177,12 +177,8 @@ impl LemmaFilter {
             .get(link.source as usize)
             .copied()
             .unwrap_or(false)
-            && (link.start..=link.end).any(|verse| {
-                self.verses
-                    .get(verse as usize)
-                    .copied()
-                    .unwrap_or(false)
-            })
+            && (link.start..=link.end)
+                .any(|verse| self.verses.get(verse as usize).copied().unwrap_or(false))
     }
 }
 
@@ -197,6 +193,8 @@ pub enum Command {
     OriginalLoaded(Result<Rc<WordsData>, String>),
     Lemma(Option<String>),
     LemmaLoaded(Result<(Rc<WordsData>, LemmaFilter), String>),
+    /// Show the focused passage's arcs alongside the lemma arcs.
+    ChapterLayer(bool),
 }
 
 thread_local! {
@@ -245,6 +243,12 @@ struct Shared {
     lemma_request: Option<String>,
     lemma_loading: bool,
     lemma_error: Option<String>,
+    /// When a lemma is active, keep the focused passage's arcs visible too.
+    chapter_layer: bool,
+    /// Snapshot of the arcs currently on screen, used by hover picking. It is
+    /// only kept for a focused passage or a lemma lens, where the active set
+    /// is small enough to test against the pointer on every move.
+    pick_links: Option<Rc<Vec<Link>>>,
 }
 
 impl Shared {
@@ -401,10 +405,16 @@ fn lemma_key_from_url(window: &web_sys::Window) -> Option<String> {
 pub fn build_lemma_filter(words: &WordsData, key: &str) -> Result<LemmaFilter, String> {
     let lang = i18n::lang();
     let id = words.lex_id_fuzzy(key).ok_or_else(|| {
-        format!("{}: {key}", i18n::tr(lang, "Lema desconocido", "Unknown lemma"))
+        format!(
+            "{}: {key}",
+            i18n::tr(lang, "Lema desconocido", "Unknown lemma")
+        )
     })?;
     let entry = words.lex(id).ok_or_else(|| {
-        format!("{}: {key}", i18n::tr(lang, "Lema sin léxico", "Lemma without lexicon"))
+        format!(
+            "{}: {key}",
+            i18n::tr(lang, "Lema sin léxico", "Lemma without lexicon")
+        )
     })?;
     let mut verses = vec![false; words.verse_count as usize];
     let occurrences = words.occurrences(id);
@@ -426,16 +436,57 @@ pub fn build_lemma_filter(words: &WordsData, key: &str) -> Result<LemmaFilter, S
     })
 }
 
-fn link_visible(
+fn link_touches(link: &Link, (start, end): (u32, u32)) -> bool {
+    let outgoing = link.source >= start && link.source <= end;
+    let incoming = link.start <= end && link.end >= start;
+    outgoing || incoming
+}
+
+fn build_active(
+    links: &[Link],
+    votes: i16,
+    filters: FilterState,
+    lemma: Option<&LemmaFilter>,
+    chapter_layer: bool,
+    focus: Option<(u32, u32)>,
+    versification: &Versification,
+) -> Vec<Link> {
+    let mut active = Vec::with_capacity(links.len());
+    for link in links {
+        if link.votes < votes || !filters.matches_source(link.source, versification) {
+            continue;
+        }
+        if let Some(lemma) = lemma {
+            if lemma.matches(link) {
+                active.push(lemma_link(*link));
+            } else if chapter_layer {
+                if let Some(focus) = focus {
+                    if link_touches(link, focus) {
+                        active.push(*link);
+                    }
+                }
+            }
+        } else if focus.is_none_or(|focus| link_touches(link, focus)) {
+            active.push(*link);
+        }
+    }
+    active
+}
+
+fn panel_link_visible(
     link: &Link,
     votes: i16,
     filters: FilterState,
     lemma: Option<&LemmaFilter>,
+    chapter_layer: bool,
     versification: &Versification,
 ) -> bool {
     link.votes >= votes
         && filters.matches_source(link.source, versification)
-        && lemma.is_none_or(|lemma| lemma.matches(link))
+        && match lemma {
+            Some(lemma) if !chapter_layer => lemma.matches(link),
+            _ => true,
+        }
 }
 
 fn lemma_link(link: Link) -> Link {
@@ -446,11 +497,28 @@ fn lemma_link(link: Link) -> Link {
     }
 }
 
-fn update_lemma_url(window: &web_sys::Window, key: Option<&str>) {
-    let url = match key {
-        Some(key) => i18n::url_with(window, &[("lemma", key)], &[]),
-        None => i18n::url_with(window, &[], &["lemma"]),
-    };
+fn update_lemma_url(window: &web_sys::Window, key: Option<&str>, chapter_layer: bool) {
+    let mut set: Vec<(&str, String)> = Vec::new();
+    let mut remove: Vec<&str> = Vec::new();
+    match key {
+        Some(key) => {
+            set.push(("lemma", key.to_string()));
+            if chapter_layer {
+                set.push(("chapter", "1".to_string()));
+            } else {
+                remove.push("chapter");
+            }
+        }
+        None => {
+            remove.push("lemma");
+            remove.push("chapter");
+        }
+    }
+    let set: Vec<(&str, &str)> = set
+        .iter()
+        .map(|(name, value)| (*name, value.as_str()))
+        .collect();
+    let url = i18n::url_with(window, &set, &remove);
     if let Ok(history) = window.history() {
         let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&url));
     }
@@ -460,12 +528,14 @@ fn update_lemma_banner(shared: &Rc<RefCell<Shared>>) {
     let Some(banner) = element("lemma-banner") else {
         return;
     };
-    let (lemma, loading, error) = {
+    let (lemma, loading, error, chapter_layer, has_focus) = {
         let state = shared.borrow();
         (
             state.lemma.clone(),
             state.lemma_loading,
             state.lemma_error.clone(),
+            state.chapter_layer,
+            state.focus.is_some(),
         )
     };
     let lang = i18n::lang();
@@ -477,13 +547,38 @@ fn update_lemma_banner(shared: &Rc<RefCell<Shared>>) {
         }
     }
     if let Some(lemma) = lemma {
+        let chapter_toggle = if has_focus {
+            let title = if chapter_layer {
+                i18n::tr(
+                    lang,
+                    "Dejar solo los arcos del lema",
+                    "Show only the lemma arcs",
+                )
+            } else {
+                i18n::tr(
+                    lang,
+                    "Añadir los arcos del capítulo",
+                    "Add the chapter arcs",
+                )
+            };
+            format!(
+                "<button class=\"lemma-layer\" type=\"button\" data-chapter-layer aria-pressed=\"{}\" title=\"{}\" aria-label=\"{}\"><span class=\"lemma-layer-track\" aria-hidden=\"true\"><span class=\"lemma-layer-knob\"></span></span><span class=\"lemma-layer-label\">{}</span></button>",
+                chapter_layer,
+                escape(title),
+                escape(title),
+                i18n::tr(lang, "Capítulo", "Chapter")
+            )
+        } else {
+            String::new()
+        };
         banner.set_inner_html(&format!(
-            "<span class=\"lemma-kicker\">{}</span><strong class=\"lemma-key\">{}</strong><span class=\"lemma-gloss\">{}</span><span class=\"lemma-count\">{} {}</span><button class=\"lemma-clear\" type=\"button\" data-lemma-clear aria-label=\"{}\">×</button>",
+            "<span class=\"lemma-kicker\">{}</span><strong class=\"lemma-key\">{}</strong><span class=\"lemma-gloss\">{}</span><span class=\"lemma-count\">{} {}</span>{}<button class=\"lemma-clear\" type=\"button\" data-lemma-clear aria-label=\"{}\">×</button>",
             i18n::tr(lang, "LEMA", "LEMMA"),
             escape(&lemma.key),
             escape(&lemma.gloss),
             lemma.verse_count,
             i18n::tr(lang, "versículos", "verses"),
+            chapter_toggle,
             i18n::tr(lang, "Quitar el filtro de lema", "Clear lemma filter")
         ));
         let _ = banner.remove_attribute("hidden");
@@ -1156,17 +1251,24 @@ pub async fn run() -> Result<(), JsValue> {
     let initial_filters = filters_from_url(&window);
     let initial_measure_dates = query_param(&window, "measure").as_deref() != Some("genre");
     let initial_lemma_key = lemma_key_from_url(&window);
-    let (initial_original, initial_lemma, initial_lemma_error) =
-        match initial_lemma_key.as_deref() {
-            Some(key) => match crate::original::load().await {
-                Ok(words) => match build_lemma_filter(&words, key) {
-                    Ok(filter) => (Some(words), Some(filter), None),
-                    Err(error) => (Some(words), None, Some(error)),
-                },
-                Err(error) => (None, None, Some(error)),
+    let initial_chapter_layer = if initial_lemma_key.is_some() {
+        query_param(&window, "chapter").as_deref() == Some("1")
+    } else {
+        true
+    };
+    let initial_focus = query_param(&window, "ref")
+        .and_then(|reference| parse_reference(&reference, &versification));
+    let (initial_original, initial_lemma, initial_lemma_error) = match initial_lemma_key.as_deref()
+    {
+        Some(key) => match crate::original::load().await {
+            Ok(words) => match build_lemma_filter(&words, key) {
+                Ok(filter) => (Some(words), Some(filter), None),
+                Err(error) => (Some(words), None, Some(error)),
             },
-            None => (None, None, None),
-        };
+            Err(error) => (None, None, Some(error)),
+        },
+        None => (None, None, None),
+    };
     let shared = Rc::new(RefCell::new(Shared {
         width: css_width,
         height: css_height,
@@ -1187,7 +1289,7 @@ pub async fn run() -> Result<(), JsValue> {
         accumulate_dirty: true,
         hover: None,
         hover_verse: None,
-        focus: None,
+        focus: initial_focus,
         highlighted: None,
         votes: initial_votes,
         filters: initial_filters,
@@ -1201,43 +1303,40 @@ pub async fn run() -> Result<(), JsValue> {
         lemma_request: None,
         lemma_loading: false,
         lemma_error: initial_lemma_error.clone(),
+        chapter_layer: initial_chapter_layer,
+        pick_links: None,
     }));
 
-    let initial_active: Vec<Link> = links_all
-        .iter()
-        .filter(|link| {
-            link_visible(
-                link,
-                initial_votes,
-                initial_filters,
-                initial_lemma.as_ref(),
-                &versification,
-            )
-        })
-        .map(|link| {
-            if initial_lemma.is_some() {
-                lemma_link(*link)
-            } else {
-                *link
-            }
-        })
-        .collect();
-    let stats = compute_stats(&initial_active, initial_votes, total_links, &versification);
+    let initial_active = build_active(
+        &links_all,
+        initial_votes,
+        initial_filters,
+        initial_lemma.as_ref(),
+        initial_chapter_layer,
+        initial_focus,
+        &versification,
+    );
+    let mut stats = compute_stats(&initial_active, initial_votes, total_links, &versification);
     update_stats(&stats);
+    if initial_focus.is_some() || initial_lemma.is_some() {
+        shared.borrow_mut().pick_links = Some(Rc::new(initial_active));
+    }
     attach_input(&canvas, &window, shared.clone(), versification.clone());
     attach_chrome(&shared);
     update_lemma_banner(&shared);
-    if let Some(lemma) = shared.borrow().lemma.as_ref() {
-        let key = lemma.key.clone();
-        update_lemma_url(&window, Some(&key));
+    let (initial_lemma_url, initial_chapter_url) = {
+        let state = shared.borrow();
+        (
+            state.lemma.as_ref().map(|lemma| lemma.key.clone()),
+            state.chapter_layer,
+        )
+    };
+    if let Some(key) = initial_lemma_url {
+        update_lemma_url(&window, Some(&key), initial_chapter_url);
     }
     if let Some(error) = initial_lemma_error {
-        update_lemma_url(&window, None);
-        set_status_error(&format!(
-            "{}: {}",
-            i18n::tr(lang, "Lema", "Lemma"),
-            error
-        ));
+        update_lemma_url(&window, None, true);
+        set_status_error(&format!("{}: {}", i18n::tr(lang, "Lema", "Lemma"), error));
     }
 
     // URL contract: ?ref=Juan.3.16 focuses a passage on load.
@@ -1280,6 +1379,8 @@ pub async fn run() -> Result<(), JsValue> {
     let mut active_votes = i16::MIN;
     let mut active_filters = FilterState::default();
     let mut active_lemma = initial_lemma_key.clone();
+    let mut active_focus = initial_focus;
+    let mut active_chapter_layer = initial_chapter_layer;
     let mut active: Vec<Link> = Vec::with_capacity(links_all.len());
     let mut force_rebuild = true;
     let mut accumulate_dirty = true;
@@ -1347,7 +1448,14 @@ pub async fn run() -> Result<(), JsValue> {
                     if let Some((start, end)) = passage {
                         apply_focus(&shared, start, end, &versification);
                     } else {
-                        shared.borrow_mut().focus = None;
+                        {
+                            let mut state = shared.borrow_mut();
+                            state.focus = None;
+                            state.hover = None;
+                            state.hover_verse = None;
+                            state.mark_scene(performance_now());
+                        }
+                        update_lemma_banner(&shared);
                     }
                     open_panel(
                         &shared,
@@ -1444,10 +1552,11 @@ pub async fn run() -> Result<(), JsValue> {
                             state.lemma_request = None;
                             state.lemma_loading = false;
                             state.lemma_error = None;
+                            state.chapter_layer = true;
                             state.view = (0.0, TOTAL_VERSES as f32);
                             state.mark_scene(performance_now());
                         }
-                        update_lemma_url(&window, None);
+                        update_lemma_url(&window, None, true);
                         update_lemma_banner(&shared);
                         force_rebuild = true;
                         let votes = shared.borrow().votes;
@@ -1469,10 +1578,11 @@ pub async fn run() -> Result<(), JsValue> {
                                         state.lemma_loading = false;
                                         state.lemma_error = None;
                                         state.show_original = true;
+                                        state.chapter_layer = false;
                                         state.view = (0.0, TOTAL_VERSES as f32);
                                         state.mark_scene(performance_now());
                                     }
-                                    update_lemma_url(&window, Some(&canonical));
+                                    update_lemma_url(&window, Some(&canonical), false);
                                     update_lemma_banner(&shared);
                                     force_rebuild = true;
                                     let votes = shared.borrow().votes;
@@ -1493,8 +1603,9 @@ pub async fn run() -> Result<(), JsValue> {
                                         state.lemma_request = None;
                                         state.lemma_loading = false;
                                         state.lemma_error = Some(error);
+                                        state.chapter_layer = true;
                                     }
-                                    update_lemma_url(&window, None);
+                                    update_lemma_url(&window, None, true);
                                     update_lemma_banner(&shared);
                                     force_rebuild = true;
                                 }
@@ -1533,6 +1644,7 @@ pub async fn run() -> Result<(), JsValue> {
                                     state.lemma_request = None;
                                     state.lemma_error = None;
                                     state.show_original = true;
+                                    state.chapter_layer = false;
                                     state.view = (0.0, TOTAL_VERSES as f32);
                                     state.mark_scene(performance_now());
                                     applied = state.lemma.as_ref().map(|lemma| lemma.key.clone());
@@ -1553,15 +1665,33 @@ pub async fn run() -> Result<(), JsValue> {
                     }
                     update_lemma_banner(&shared);
                     if let Some(key) = applied {
-                        update_lemma_url(&window, Some(&key));
-                    } else if shared.borrow().lemma.is_none() && shared.borrow().lemma_error.is_some()
+                        update_lemma_url(&window, Some(&key), false);
+                    } else if shared.borrow().lemma.is_none()
+                        && shared.borrow().lemma_error.is_some()
                     {
-                        update_lemma_url(&window, None);
+                        update_lemma_url(&window, None, true);
                     }
                     let votes = shared.borrow().votes;
                     if shared.borrow().focus.is_some() {
                         open_panel(&shared, &links_all, &versification, &text, votes);
                     }
+                }
+                Command::ChapterLayer(visible) => {
+                    {
+                        let mut state = shared.borrow_mut();
+                        state.chapter_layer = visible;
+                        state.mark_scene(frame_now);
+                    }
+                    force_rebuild = true;
+                    let key = shared
+                        .borrow()
+                        .lemma
+                        .as_ref()
+                        .map(|lemma| lemma.key.clone());
+                    update_lemma_url(&window, key.as_deref(), visible);
+                    update_lemma_banner(&shared);
+                    let votes = shared.borrow().votes;
+                    open_panel(&shared, &links_all, &versification, &text, votes);
                 }
             }
         }
@@ -1570,36 +1700,36 @@ pub async fn run() -> Result<(), JsValue> {
         let filters = shared.borrow().filters;
         let lemma = shared.borrow().lemma.clone();
         let lemma_key = lemma.as_ref().map(|lemma| lemma.key.clone());
-        if votes != active_votes || filters != active_filters || lemma_key != active_lemma {
+        let focus_now = shared.borrow().focus;
+        let chapter_layer_now = shared.borrow().chapter_layer;
+        if votes != active_votes
+            || filters != active_filters
+            || lemma_key != active_lemma
+            || focus_now != active_focus
+            || chapter_layer_now != active_chapter_layer
+        {
             active_votes = votes;
             active_filters = filters;
             active_lemma = lemma_key;
-            active.clear();
-            active.extend(
-                links_all
-                    .iter()
-                    .filter(|link| {
-                        link_visible(
-                            link,
-                            votes,
-                            filters,
-                            lemma.as_ref(),
-                            &versification,
-                        )
-                    })
-                    .map(|link| {
-                        if lemma.is_some() {
-                            lemma_link(*link)
-                        } else {
-                            *link
-                        }
-                    }),
+            active_focus = focus_now;
+            active_chapter_layer = chapter_layer_now;
+            active = build_active(
+                &links_all,
+                votes,
+                filters,
+                lemma.as_ref(),
+                chapter_layer_now,
+                focus_now,
+                &versification,
             );
-            let stats = compute_stats(&active, votes, total_links, &versification);
+            shared.borrow_mut().pick_links =
+                (focus_now.is_some() || lemma.is_some()).then(|| Rc::new(active.clone()));
+            highlight_votes = i16::MIN;
+            stats = compute_stats(&active, votes, total_links, &versification);
             update_stats(&stats);
             force_rebuild = true;
             shared.borrow_mut().mark_scene(frame_now);
-            if shared.borrow().focus.is_some() {
+            if focus_now.is_some() {
                 open_panel(&shared, &links_all, &versification, &text, votes);
             }
         }
@@ -1648,6 +1778,7 @@ pub async fn run() -> Result<(), JsValue> {
         let overlay_dirty = state.overlay_dirty || intro || needs_lod;
         let focus = state.focus;
         let hover = state.hover;
+        let chapter_layer = state.chapter_layer;
         state.scene_dirty = false;
         state.overlay_dirty = false;
         drop(state);
@@ -1697,7 +1828,12 @@ pub async fn run() -> Result<(), JsValue> {
         if needs_lod {
             accumulate_dirty = true;
         }
-        let highlight = focus.or(hover);
+        let chapter_highlight = if lemma.is_none() || chapter_layer {
+            focus
+        } else {
+            None
+        };
+        let highlight = hover.or(chapter_highlight);
         let highlight_changed =
             highlight != shared.borrow().highlighted || highlight_votes != votes;
         if highlight_changed {
@@ -1734,8 +1870,16 @@ pub async fn run() -> Result<(), JsValue> {
                 vertical: if state.layout.vertical { 1.0 } else { 0.0 },
                 steady: if reveal >= 1.0 { 1.0 } else { 0.0 },
                 reveal: reveal as f32,
-                width: if focus.is_some() { 1.9 } else { 1.6 },
-                ribbon_alpha: if focus.is_some() { 0.95 } else { 0.85 },
+                width: if hover.is_some() || focus.is_some() {
+                    1.95
+                } else {
+                    1.6
+                },
+                ribbon_alpha: if hover.is_some() || focus.is_some() {
+                    0.95
+                } else {
+                    0.85
+                },
                 height_scale,
                 pad2: 0.0,
                 pad3: 0.0,
@@ -1749,7 +1893,20 @@ pub async fn run() -> Result<(), JsValue> {
             };
             arc_uniforms.alpha = fade / glow_scale;
             queue.write_buffer(&arc_uniforms_buffer, 0, bytemuck::bytes_of(&arc_uniforms));
-            glow_uniforms.dim = if focus.is_some() { 0.28 } else { 1.0 };
+            let base_dim = if chapter_highlight.is_some() {
+                if lemma.is_some() && chapter_layer {
+                    0.55
+                } else {
+                    0.28
+                }
+            } else {
+                1.0
+            };
+            glow_uniforms.dim = if hover.is_some() && highlight_count > 0 {
+                0.14
+            } else {
+                base_dim
+            };
             queue.write_buffer(&glow_uniforms_buffer, 0, bytemuck::bytes_of(&glow_uniforms));
 
             let surface_texture = match surface.get_current_texture() {
@@ -1892,26 +2049,39 @@ pub async fn run() -> Result<(), JsValue> {
 }
 
 fn apply_focus(shared: &Rc<RefCell<Shared>>, start: u32, end: u32, versification: &Versification) {
-    let mut state = shared.borrow_mut();
-    state.focus = Some((start, end));
-    // Keep the current span and pan only when the passage is outside it.
-    // Selecting a verse never destroys the full-Bible view.
-    let (view_start, view_end) = state.view;
-    let span = view_end - view_start;
-    if (start as f32) < view_start - 0.5 || (end as f32 + 1.0) > view_end + 0.5 {
-        let center = (start as f32 + end as f32 + 1.0) / 2.0;
-        let next_start = (center - span / 2.0).clamp(0.0, TOTAL_VERSES as f32 - span);
-        state.view = (next_start, next_start + span);
+    {
+        let mut state = shared.borrow_mut();
+        state.focus = Some((start, end));
+        // Keep the current span and pan only when the passage is outside it.
+        // Selecting a verse never destroys the full-Bible view.
+        let (view_start, view_end) = state.view;
+        let span = view_end - view_start;
+        if (start as f32) < view_start - 0.5 || (end as f32 + 1.0) > view_end + 0.5 {
+            let center = (start as f32 + end as f32 + 1.0) / 2.0;
+            let next_start = (center - span / 2.0).clamp(0.0, TOTAL_VERSES as f32 - span);
+            state.view = (next_start, next_start + span);
+        }
+        state.mark_scene(performance_now());
     }
-    state.mark_scene(performance_now());
+    update_lemma_banner(shared);
     if let Some(reference) = versification.ref_at(start) {
         if let Some(window) = web_sys::window() {
-            let reference = format!(
-                "{}.{}.{}",
-                tables::BOOK_IDS[reference.book],
-                reference.chapter,
-                reference.verse
-            );
+            // Keep a whole chapter as `Book.chapter` in the URL so that
+            // reloading and sharing preserve the chapter lens instead of
+            // collapsing it to its first verse.
+            let whole_chapter = versification
+                .chapter_range(reference.book, reference.chapter)
+                .is_some_and(|chapter| chapter == (start, end));
+            let reference = if whole_chapter {
+                format!("{}.{}", tables::BOOK_IDS[reference.book], reference.chapter)
+            } else {
+                format!(
+                    "{}.{}.{}",
+                    tables::BOOK_IDS[reference.book],
+                    reference.chapter,
+                    reference.verse
+                )
+            };
             let url = i18n::url_with(&window, &[("ref", &reference)], &[]);
             if let Ok(history) = window.history() {
                 let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&url));
@@ -1927,7 +2097,7 @@ fn open_panel(
     text: &TranslationText,
     votes: i16,
 ) {
-    let (focus, filters, original, show_original, loading, error, lemma) = {
+    let (focus, filters, original, show_original, loading, error, lemma, chapter_layer) = {
         let state = shared.borrow();
         (
             state.focus,
@@ -1937,6 +2107,7 @@ fn open_panel(
             state.original_loading,
             state.original_error.clone(),
             state.lemma.clone(),
+            state.chapter_layer,
         )
     };
     let Some((start, end)) = focus else {
@@ -1958,6 +2129,7 @@ fn open_panel(
         loading,
         error.as_deref(),
         lemma.as_ref(),
+        chapter_layer,
     );
     if let Some(panel) = element("panel") {
         panel.set_inner_html(&html);
@@ -1979,6 +2151,7 @@ fn panel_html(
     original_loading: bool,
     original_error: Option<&str>,
     lemma: Option<&LemmaFilter>,
+    chapter_layer: bool,
 ) -> String {
     let lang = i18n::lang();
     let (Some(first), Some(last)) = (versification.ref_at(start), versification.ref_at(end)) else {
@@ -2016,7 +2189,7 @@ fn panel_html(
                 escape(content)
             };
             body.push_str(&format!(
-                "<p class=\"panel-verse\"><span class=\"panel-verse-ref\">{}</span>{}</p>",
+                "<p class=\"panel-verse\" data-verse=\"{verse}\"><span class=\"panel-verse-ref\">{}</span>{}</p>",
                 escape(&i18n::format_verse(lang, versification, verse)),
                 content
             ));
@@ -2026,7 +2199,7 @@ fn panel_html(
     let mut outgoing: Vec<&Link> = links
         .iter()
         .filter(|link| {
-            link_visible(link, votes, filters, lemma, versification)
+            panel_link_visible(link, votes, filters, lemma, chapter_layer, versification)
                 && link.source >= start
                 && link.source <= end
         })
@@ -2038,7 +2211,7 @@ fn panel_html(
     let mut incoming: Vec<&Link> = links
         .iter()
         .filter(|link| {
-            link_visible(link, votes, filters, lemma, versification)
+            panel_link_visible(link, votes, filters, lemma, chapter_layer, versification)
                 && link.start <= end
                 && link.end >= start
         })
@@ -2177,11 +2350,7 @@ fn original_section(
                     )
                 ));
             } else {
-                html.push_str(&crate::original::words_html(
-                    words,
-                    verse,
-                    "original-words",
-                ));
+                html.push_str(&crate::original::words_html(words, verse, "original-words"));
             }
             html.push_str("</div>");
         }
@@ -2519,21 +2688,10 @@ fn attach_input(
                     if moved > 7.0 {
                         return;
                     }
-                    let along = state.layout.along_of(state.down_x, state.down_y);
-                    let inside =
-                        along >= state.layout.axis_start && along <= state.layout.axis_end;
-                    let verse = state.layout.along_to_verse(state.view, along);
-                    let ppv = state.layout.pixels_per_verse(state.view);
-                    state.hover = if inside {
-                        passage_at(verse, ppv, &versification)
-                    } else {
-                        None
-                    };
-                    state.hover_verse = if inside {
-                        Some((verse.floor() as u32).min(TOTAL_VERSES - 1))
-                    } else {
-                        None
-                    };
+                    let (hover, hover_verse) =
+                        pick_hover(&state, state.down_x, state.down_y, &versification);
+                    state.hover = hover;
+                    state.hover_verse = hover_verse;
                     state.last_x = state.down_x;
                     state.last_y = state.down_y;
                     state.long_press = true;
@@ -2565,9 +2723,8 @@ fn attach_input(
                 let mut state = shared.borrow_mut();
                 cancel_press_timer(&mut state);
                 let moved = ((x - state.down_x).powi(2) + (y - state.down_y).powi(2)).sqrt();
-                let click = state.dragging
-                    && moved < 6.0
-                    && performance_now() - state.down_time < 450.0;
+                let click =
+                    state.dragging && moved < 6.0 && performance_now() - state.down_time < 450.0;
                 let long_press = state.long_press;
                 state.dragging = false;
                 state.long_press = false;
@@ -2602,20 +2759,9 @@ fn attach_input(
             let y = event.client_y() as f32 - rect.top() as f32;
             let mut state = shared.borrow_mut();
             if state.long_press {
-                let along = state.layout.along_of(x, y);
-                let inside = along >= state.layout.axis_start && along <= state.layout.axis_end;
-                let verse = state.layout.along_to_verse(state.view, along);
-                let ppv = state.layout.pixels_per_verse(state.view);
-                state.hover = if inside {
-                    passage_at(verse, ppv, &versification)
-                } else {
-                    None
-                };
-                state.hover_verse = if inside {
-                    Some((verse.floor() as u32).min(TOTAL_VERSES - 1))
-                } else {
-                    None
-                };
+                let (hover, hover_verse) = pick_hover(&state, x, y, &versification);
+                state.hover = hover;
+                state.hover_verse = hover_verse;
                 state.last_x = x;
                 state.last_y = y;
                 state.mark_overlay();
@@ -2623,9 +2769,7 @@ fn attach_input(
             }
             if state.dragging {
                 if state.press_timer.is_some() {
-                    let moved = ((x - state.down_x).powi(2)
-                        + (y - state.down_y).powi(2))
-                    .sqrt();
+                    let moved = ((x - state.down_x).powi(2) + (y - state.down_y).powi(2)).sqrt();
                     if moved > 7.0 {
                         cancel_press_timer(&mut state);
                     }
@@ -2647,19 +2791,13 @@ fn attach_input(
             }
             let along = state.layout.along_of(x, y);
             let inside = along >= state.layout.axis_start && along <= state.layout.axis_end;
-            let verse = state.layout.along_to_verse(state.view, along);
-            let ppv = state.pixels_per_verse();
-            let passage = if inside {
-                passage_at(verse, ppv, &versification)
+            let (hover, hover_verse) = if inside || state.pick_links.is_some() {
+                pick_hover(&state, x, y, &versification)
             } else {
-                None
+                (None, None)
             };
-            state.hover = passage;
-            state.hover_verse = if inside {
-                Some((verse.floor() as u32).min(TOTAL_VERSES - 1))
-            } else {
-                None
-            };
+            state.hover = hover;
+            state.hover_verse = hover_verse;
             state.mark_overlay();
             state.last_x = x;
             state.last_y = y;
@@ -2688,11 +2826,10 @@ fn attach_input(
     };
     let context = {
         let canvas = canvas.clone();
-        let handler = Closure::<dyn FnMut(web_sys::MouseEvent)>::new(
-            move |event: web_sys::MouseEvent| {
+        let handler =
+            Closure::<dyn FnMut(web_sys::MouseEvent)>::new(move |event: web_sys::MouseEvent| {
                 event.prevent_default();
-            },
-        );
+            });
         let _ = canvas
             .add_event_listener_with_callback("contextmenu", handler.as_ref().unchecked_ref());
         handler
@@ -2728,7 +2865,8 @@ fn attach_input(
     let _ = canvas.add_event_listener_with_callback("pointermove", moved.as_ref().unchecked_ref());
     let _ = window.add_event_listener_with_callback("pointerup", up.as_ref().unchecked_ref());
     let _ = canvas.add_event_listener_with_callback("pointerleave", leave.as_ref().unchecked_ref());
-    let _ = canvas.add_event_listener_with_callback("pointercancel", cancel.as_ref().unchecked_ref());
+    let _ =
+        canvas.add_event_listener_with_callback("pointercancel", cancel.as_ref().unchecked_ref());
     let _ = canvas.add_event_listener_with_callback("wheel", wheel.as_ref().unchecked_ref());
     let _ = window.add_event_listener_with_callback("resize", resize.as_ref().unchecked_ref());
     down.forget();
@@ -3163,6 +3301,87 @@ fn attach_chrome(shared: &Rc<RefCell<Shared>>) {
     }
 
     if let Some(panel) = document.get_element_by_id("panel") {
+        let hover_shared = shared.clone();
+        let over = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(
+            move |event: web_sys::PointerEvent| {
+                let Some(target) = event
+                    .target()
+                    .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+                else {
+                    return;
+                };
+                let Ok(Some(verse_element)) = target.closest(".panel-verse[data-verse]") else {
+                    return;
+                };
+                let Some(verse) = verse_element
+                    .get_attribute("data-verse")
+                    .and_then(|value| value.parse::<u32>().ok())
+                else {
+                    return;
+                };
+                let mut state = hover_shared.borrow_mut();
+                if state
+                    .focus
+                    .is_some_and(|(start, end)| verse >= start && verse <= end)
+                {
+                    state.hover = Some((verse, verse));
+                    state.hover_verse = Some(verse);
+                    state.mark_overlay();
+                }
+            },
+        );
+        let _ =
+            panel.add_event_listener_with_callback("pointerover", over.as_ref().unchecked_ref());
+        over.forget();
+
+        let out_shared = shared.clone();
+        let out = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(
+            move |event: web_sys::PointerEvent| {
+                let Some(target) = event
+                    .target()
+                    .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+                else {
+                    return;
+                };
+                if target
+                    .closest(".panel-verse[data-verse]")
+                    .ok()
+                    .flatten()
+                    .is_none()
+                {
+                    return;
+                }
+                let related = event
+                    .related_target()
+                    .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+                    .and_then(|related| related.closest(".panel-verse[data-verse]").ok().flatten());
+                if related.is_some() {
+                    return;
+                }
+                let mut state = out_shared.borrow_mut();
+                state.hover = None;
+                state.hover_verse = None;
+                state.mark_overlay();
+            },
+        );
+        let _ = panel.add_event_listener_with_callback("pointerout", out.as_ref().unchecked_ref());
+        out.forget();
+
+        let leave_shared = shared.clone();
+        let leave = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(
+            move |_event: web_sys::PointerEvent| {
+                let mut state = leave_shared.borrow_mut();
+                state.hover = None;
+                state.hover_verse = None;
+                state.mark_overlay();
+            },
+        );
+        let _ =
+            panel.add_event_listener_with_callback("pointerleave", leave.as_ref().unchecked_ref());
+        leave.forget();
+    }
+
+    if let Some(panel) = document.get_element_by_id("panel") {
         let shared = shared.clone();
         let handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
             let Some(target) = event
@@ -3172,8 +3391,14 @@ fn attach_chrome(shared: &Rc<RefCell<Shared>>) {
                 return;
             };
             if let Ok(Some(_)) = target.closest("#panel-close") {
-                shared.borrow_mut().focus = None;
-                shared.borrow_mut().mark_scene(performance_now());
+                {
+                    let mut state = shared.borrow_mut();
+                    state.focus = None;
+                    state.hover = None;
+                    state.hover_verse = None;
+                    state.mark_scene(performance_now());
+                }
+                update_lemma_banner(&shared);
                 if let Some(panel) = element("panel") {
                     let _ = panel.set_attribute("hidden", "");
                 }
@@ -3223,6 +3448,7 @@ fn attach_chrome(shared: &Rc<RefCell<Shared>>) {
     }
 
     if let Some(banner) = document.get_element_by_id("lemma-banner") {
+        let shared = shared.clone();
         let handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
             let Some(target) = event
                 .target()
@@ -3233,9 +3459,12 @@ fn attach_chrome(shared: &Rc<RefCell<Shared>>) {
             if let Ok(Some(_)) = target.closest("[data-lemma-clear]") {
                 send(Command::Lemma(None));
             }
+            if let Ok(Some(_)) = target.closest("[data-chapter-layer]") {
+                let visible = shared.borrow().chapter_layer;
+                send(Command::ChapterLayer(!visible));
+            }
         });
-        let _ =
-            banner.add_event_listener_with_callback("click", handler.as_ref().unchecked_ref());
+        let _ = banner.add_event_listener_with_callback("click", handler.as_ref().unchecked_ref());
         handler.forget();
     }
 }
@@ -3268,6 +3497,155 @@ fn passage_at(verse: f32, ppv: f32, versification: &Versification) -> Option<(u3
     } else {
         Some((index, index))
     }
+}
+
+/// Hover is scoped to the focused passage: once a chapter (or verse) is
+/// selected, moving over the rest of the Bible must not pick another passage.
+fn hover_at(
+    focus: Option<(u32, u32)>,
+    verse: f32,
+    ppv: f32,
+    versification: &Versification,
+) -> (Option<(u32, u32)>, Option<u32>) {
+    let index = (verse.floor() as i64).clamp(0, i64::from(TOTAL_VERSES) - 1) as u32;
+    if let Some((start, end)) = focus {
+        if index < start || index > end {
+            return (None, None);
+        }
+        return (Some((index, index)), Some(index));
+    }
+    (passage_at(verse, ppv, versification), Some(index))
+}
+
+/// Verse represented by an arc under the pointer. For outgoing arcs that is the
+/// source verse; for incoming arcs, the first target verse inside the focus. A
+/// lemma arc may connect two occurrences outside the focus; it is still the
+/// visible object under the pointer, so it anchors at whichever of its two
+/// endpoints is closer along the axis.
+fn arc_focus_verse(
+    link: &Link,
+    focus: Option<(u32, u32)>,
+    lemma: Option<&LemmaFilter>,
+    near_source: bool,
+) -> Option<u32> {
+    // The arc ends at the midpoint of a target range, which can hold several
+    // lemma occurrences. Pick the one nearest that endpoint so the tooltip
+    // names the verse the pointer is actually over.
+    let nearest_lemma = |low: u32, high: u32| {
+        lemma.and_then(|lemma| {
+            (low..=high)
+                .filter(|verse| lemma.verses.get(*verse as usize).copied().unwrap_or(false))
+                .min_by(|a, b| {
+                    (*a as f32 - link.b)
+                        .abs()
+                        .total_cmp(&(*b as f32 - link.b).abs())
+                })
+        })
+    };
+    let Some((start, end)) = focus else {
+        return Some(if near_source {
+            link.source
+        } else {
+            nearest_lemma(link.start, link.end).unwrap_or(link.start)
+        });
+    };
+    if link.source >= start && link.source <= end {
+        return Some(link.source);
+    }
+    if link.start <= end && link.end >= start {
+        let low = link.start.max(start);
+        let high = link.end.min(end);
+        return Some(nearest_lemma(low, high).unwrap_or(low));
+    }
+    if lemma.is_some_and(|lemma| lemma.matches(link)) {
+        return Some(if near_source {
+            link.source
+        } else {
+            nearest_lemma(link.start, link.end).unwrap_or(link.start)
+        });
+    }
+    None
+}
+
+/// Picks the active arc nearest to the pointer, in screen space. Hovering a
+/// wide arc used to require landing on the one-pixel column of its source
+/// verse; this makes the arc body itself the target.
+fn arc_hover_at(state: &Shared, x: f32, y: f32) -> Option<u32> {
+    let links = state.pick_links.as_ref()?;
+    let layout = &state.layout;
+    let span = (state.view.1 - state.view.0).max(f32::EPSILON);
+    let along_scale = (layout.axis_end - layout.axis_start) / span;
+    let half_span = 0.5 * (layout.axis_end - layout.axis_start);
+    let height_scale = if half_span > 1.0 {
+        (layout.max_height / half_span).min(1.0)
+    } else {
+        1.0
+    };
+    let (along, across) = if layout.vertical { (y, x) } else { (x, y) };
+    // Arcs live on one side of the baseline only.
+    if (layout.vertical && across < layout.baseline)
+        || (!layout.vertical && across > layout.baseline)
+    {
+        return None;
+    }
+    let mut best: Option<(f32, i16, u32)> = None;
+    for link in links.iter() {
+        let a = layout.axis_start + (link.a - state.view.0) * along_scale;
+        let b = layout.axis_start + (link.b - state.view.0) * along_scale;
+        let (low, high) = if a <= b { (a, b) } else { (b, a) };
+        if along < low || along > high {
+            continue;
+        }
+        let center = 0.5 * (a + b);
+        let radius = 0.5 * (high - low);
+        if radius < 0.5 {
+            continue;
+        }
+        let t = ((along - center) / radius).clamp(-1.0, 1.0);
+        let height = radius * height_scale * (1.0 - t * t).max(0.0).sqrt();
+        let curve = if layout.vertical {
+            layout.baseline + height
+        } else {
+            layout.baseline - height
+        };
+        let distance = (across - curve).abs();
+        let tolerance = 6.0 + 3.0 * link.weight;
+        if distance > tolerance {
+            continue;
+        }
+        let Some(verse) = arc_focus_verse(
+            link,
+            state.focus,
+            state.lemma.as_ref(),
+            (along - a).abs() <= (along - b).abs(),
+        ) else {
+            continue;
+        };
+        let candidate = (distance, -link.votes, verse);
+        if best.is_none_or(|best| candidate < best) {
+            best = Some(candidate);
+        }
+    }
+    best.map(|(_, _, verse)| verse)
+}
+
+/// Combined hover resolution: an arc under the pointer wins (its source verse
+/// is what the viewer is looking for), otherwise fall back to the axis column.
+fn pick_hover(
+    state: &Shared,
+    x: f32,
+    y: f32,
+    versification: &Versification,
+) -> (Option<(u32, u32)>, Option<u32>) {
+    if let Some(verse) = arc_hover_at(state, x, y) {
+        return (Some((verse, verse)), Some(verse));
+    }
+    let along = state.layout.along_of(x, y);
+    if along < state.layout.axis_start || along > state.layout.axis_end {
+        return (None, None);
+    }
+    let verse = state.layout.along_to_verse(state.view, along);
+    hover_at(state.focus, verse, state.pixels_per_verse(), versification)
 }
 
 pub(crate) fn parse_reference(input: &str, versification: &Versification) -> Option<(u32, u32)> {
