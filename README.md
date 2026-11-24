@@ -114,16 +114,15 @@ La edición Platense no incluye Números 1:54, Marcos 9:44 y 9:46 ni Hechos 8:37
 (este último también falta en la ASV); la interfaz los marca como «No incluido
 en esta versión» en lugar de inventar texto.
 
-## Publicar en GitHub Pages
+## Publicar en Vercel
 
 ```bash
-scripts/deploy-pages.sh
+scripts/deploy-vercel.sh
 ```
 
-El script compila `crates/app` con Trunk y publica `dist/` en la rama
-`gh-pages` (incluidos los binarios de datos). En GitHub, la fuente de Pages debe
-ser la rama `gh-pages`, carpeta `/`. `Trunk.toml` usa `public_url = "./"` para
-que los recursos funcionen bajo la subruta del proyecto.
+El script compila `crates/app` con Trunk y publica `dist/` (incluidos los
+binarios de datos) en el proyecto `aletheia-arcs` de Vercel. `Trunk.toml` usa
+`public_url = "./"` para que los recursos funcionen en la raíz del dominio.
 Sitio: <https://arcs.johan.cl/>. Repositorio: <https://github.com/yojananyosef/aletheia-arcs>.
 
 ## Diseño
