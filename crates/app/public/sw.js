@@ -1,5 +1,5 @@
 /* Aletheia cross-reference explorer: offline shell + runtime cache. */
-const CACHE = "aletheia-xrefs-v8";
+const CACHE = "aletheia-xrefs-v9";
 const SHELL = [
   "./",
   "./about/",

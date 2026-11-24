@@ -1336,8 +1336,8 @@ pub async fn run(xrefs: XrefData, text: TranslationText) -> Result<(), JsValue> 
     if let Some(document) = window.document() {
         document.set_title(i18n::tr(
             lang,
-            "Hilos · Aletheia",
-            "Threads · Aletheia",
+            "Hilos · Aletheia Arcs",
+            "Threads · Aletheia Arcs",
         ));
     }
     crate::render::attach_translation_select(&window);

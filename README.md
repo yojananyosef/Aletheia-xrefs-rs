@@ -1,4 +1,4 @@
-# Aletheia · Referencias cruzadas de la Biblia
+# Aletheia Arcs · Referencias cruzadas de la Biblia
 
 Visualizador web de referencias cruzadas de la Biblia escrito en **Rust +
 WebAssembly**, con **Leptos** para la interfaz y **wgpu** (WebGPU, con retroceso
@@ -124,7 +124,8 @@ El script compila `crates/app` con Trunk y publica `dist/` en la rama
 `gh-pages` (incluidos los binarios de datos). En GitHub, la fuente de Pages debe
 ser la rama `gh-pages`, carpeta `/`. `Trunk.toml` usa `public_url = "./"` para
 que los recursos funcionen bajo la subruta del proyecto.
-Sitio: <https://yojananyosef.github.io/Aletheia-xrefs-rs/>.
+Sitio: <https://arcs.johan.cl/> (el repositorio técnico sigue siendo
+`Aletheia-xrefs-rs`; GitHub Pages puede seguir sirviendo la misma compilación).
 
 ## Diseño
 

@@ -18,7 +18,7 @@ fn App() -> impl IntoView {
                         <path d="M2 23h24" stroke="currentColor" stroke-opacity=".28" stroke-width="1"/>
                     </svg>
                     <span class="brand-text">
-                        <span class="brand-kicker">"ALETHEIA"</span>
+                        <span class="brand-kicker">"ALETHEIA ARCS"</span>
                         <h1>{i18n::tr(lang, "Referencias cruzadas", "Bible Cross References")}</h1>
                     </span>
                 </a>

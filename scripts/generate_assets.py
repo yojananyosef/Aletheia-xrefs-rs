@@ -118,7 +118,12 @@ def og_image() -> Image.Image:
         )
 
     x = scale * 76
-    draw.text((x, scale * 74), "A L E T H E I A", font=font(SANS_BOLD, 17 * scale), fill=GOLD)
+    draw.text(
+        (x, scale * 74),
+        "A L E T H E I A   A R C S",
+        font=font(SANS_BOLD, 17 * scale),
+        fill=GOLD,
+    )
     draw.text(
         (x, scale * 118),
         "Referencias cruzadas",
@@ -159,7 +164,7 @@ def og_image() -> Image.Image:
 
     draw.text(
         (x, h - scale * 76),
-        "aletheia · referencias cruzadas · visualizador web",
+        "aletheia arcs · referencias cruzadas · visualizador web",
         font=font(SANS, 14 * scale),
         fill=(109, 115, 121),
     )

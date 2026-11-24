@@ -656,7 +656,7 @@ fn share_current() {
     let title = window
         .document()
         .map(|document| document.title())
-        .unwrap_or_else(|| "Aletheia · Referencias cruzadas".into());
+        .unwrap_or_else(|| "Aletheia Arcs · Referencias cruzadas".into());
     let navigator = window.navigator();
     let share = js_sys::Reflect::get(navigator.as_ref(), &JsValue::from_str("share"))
         .ok()
@@ -751,8 +751,8 @@ pub async fn run() -> Result<(), JsValue> {
     let lang = i18n::lang_of(&window);
     document.set_title(i18n::tr(
         lang,
-        "Referencias cruzadas de la Biblia · Aletheia",
-        "Bible Cross References · Aletheia",
+        "Aletheia Arcs · Referencias cruzadas de la Biblia",
+        "Aletheia Arcs · Bible Cross References",
     ));
     let canvas: HtmlCanvasElement = document
         .get_element_by_id("arcs")
